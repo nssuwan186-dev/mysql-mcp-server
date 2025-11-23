@@ -44,6 +44,19 @@ func New(cfg Config) (*Client, error) {
 		queryTimeout: time.Duration(cfg.QueryTimeoutS) * time.Second,
 	}, nil
 }
+// NewWithDB constructs a Client from an existing *sql.DB.
+// This is mainly useful for tests where we use a sqlmock.DB.
+func NewWithDB(db *sql.DB, cfg Config) (*Client, error) {
+	if db == nil {
+		return nil, fmt.Errorf("db is nil")
+	}
+
+	return &Client{
+		db:           db,
+		maxRows:      cfg.MaxRows,
+		queryTimeout: time.Duration(cfg.QueryTimeoutS) * time.Second,
+	}, nil
+}
 
 func (c *Client) Close() error {
 	return c.db.Close()

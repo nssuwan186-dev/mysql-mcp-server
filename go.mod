@@ -3,6 +3,7 @@ module github.com/askdba/mysql-mcp-server
 go 1.23.0
 
 require (
+	github.com/DATA-DOG/go-sqlmock v1.5.2
 	github.com/go-sql-driver/mysql v1.9.3
 	github.com/modelcontextprotocol/go-sdk v1.1.0
 )
