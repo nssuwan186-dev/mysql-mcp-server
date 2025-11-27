@@ -79,19 +79,19 @@ func logError(message string, fields map[string]interface{}) {
 // ===== Audit Logging =====
 
 type AuditEntry struct {
-	Timestamp  string  `json:"timestamp"`
-	Tool       string  `json:"tool"`
-	Database   string  `json:"database,omitempty"`
-	Query      string  `json:"query,omitempty"`
-	DurationMs int64   `json:"duration_ms"`
-	RowCount   int     `json:"row_count,omitempty"`
-	Success    bool    `json:"success"`
-	Error      string  `json:"error,omitempty"`
+	Timestamp  string `json:"timestamp"`
+	Tool       string `json:"tool"`
+	Database   string `json:"database,omitempty"`
+	Query      string `json:"query,omitempty"`
+	DurationMs int64  `json:"duration_ms"`
+	RowCount   int    `json:"row_count,omitempty"`
+	Success    bool   `json:"success"`
+	Error      string `json:"error,omitempty"`
 }
 
 type AuditLogger struct {
-	file   *os.File
-	mu     sync.Mutex
+	file    *os.File
+	mu      sync.Mutex
 	enabled bool
 }
 
@@ -843,18 +843,31 @@ func toolRunQuery(
 	defer cancel()
 
 	// Switch to the specified database if provided
+	// Use a transaction to ensure USE and query run on the same connection
 	database := strings.TrimSpace(input.Database)
+	var rows *sql.Rows
+	var err error
+
 	if database != "" {
 		dbName, err := quoteIdent(database)
 		if err != nil {
 			return nil, QueryResult{}, fmt.Errorf("invalid database name: %w", err)
 		}
-		if _, err := db.ExecContext(ctx, "USE "+dbName); err != nil {
+		// Use a single connection to ensure USE affects the query
+		conn, err := db.Conn(ctx)
+		if err != nil {
+			return nil, QueryResult{}, fmt.Errorf("failed to get connection: %w", err)
+		}
+		defer conn.Close()
+
+		if _, err := conn.ExecContext(ctx, "USE "+dbName); err != nil {
 			return nil, QueryResult{}, fmt.Errorf("failed to switch database: %w", err)
 		}
+		rows, err = conn.QueryContext(ctx, sqlText)
+	} else {
+		rows, err = db.QueryContext(ctx, sqlText)
 	}
 
-	rows, err := db.QueryContext(ctx, sqlText)
 	if err != nil {
 		timer.LogError(err, sqlText)
 		if auditLogger != nil {
@@ -1088,37 +1101,49 @@ func toolListIndexes(
 	}
 	defer rows.Close()
 
+	// Get column count dynamically to handle different MySQL versions
+	cols, err := rows.Columns()
+	if err != nil {
+		return nil, ListIndexesOutput{}, fmt.Errorf("failed to get columns: %w", err)
+	}
+	colCount := len(cols)
+
 	// Group columns by index name
 	indexCols := make(map[string][]string)
 	indexInfo := make(map[string]IndexInfo)
 
+	// Column positions (standard SHOW INDEX output):
+	// 0:Table, 1:Non_unique, 2:Key_name, 3:Seq_in_index, 4:Column_name,
+	// 5:Collation, 6:Cardinality, 7:Sub_part, 8:Packed, 9:Null, 10:Index_type
+	// Newer versions may have additional columns (Comment, Index_comment, Visible, Expression)
+
 	for rows.Next() {
-		var table, nonUnique, keyName, seqInIndex, colName, collation, cardinality, subPart, packed, null, indexType, comment, indexComment, visible, expression interface{}
-		if err := rows.Scan(&table, &nonUnique, &keyName, &seqInIndex, &colName, &collation, &cardinality, &subPart, &packed, &null, &indexType, &comment, &indexComment, &visible, &expression); err != nil {
-			// Try simpler scan for older MySQL versions
-			var t, nu, kn, si, cn, coll, card, sp, pk, nl, it, cm, ic interface{}
-			rows2, _ := db.QueryContext(ctx, query)
-			defer rows2.Close()
-			for rows2.Next() {
-				if err := rows2.Scan(&t, &nu, &kn, &si, &cn, &coll, &card, &sp, &pk, &nl, &it, &cm, &ic); err != nil {
-					continue
-				}
-				name := fmt.Sprintf("%v", kn)
-				indexCols[name] = append(indexCols[name], fmt.Sprintf("%v", cn))
-				indexInfo[name] = IndexInfo{
-					Name:      name,
-					NonUnique: fmt.Sprintf("%v", nu) == "1",
-					Type:      fmt.Sprintf("%v", it),
-				}
-			}
-			break
+		// Create slice to hold all columns dynamically
+		values := make([]interface{}, colCount)
+		ptrs := make([]interface{}, colCount)
+		for i := range values {
+			ptrs[i] = &values[i]
 		}
-		name := fmt.Sprintf("%v", keyName)
-		indexCols[name] = append(indexCols[name], fmt.Sprintf("%v", colName))
-		indexInfo[name] = IndexInfo{
-			Name:      name,
-			NonUnique: fmt.Sprintf("%v", nonUnique) == "1",
-			Type:      fmt.Sprintf("%v", indexType),
+
+		if err := rows.Scan(ptrs...); err != nil {
+			continue
+		}
+
+		// Extract the values we need (positions 1, 2, 4, 10)
+		if colCount < 11 {
+			continue // Need at least 11 columns for basic index info
+		}
+
+		keyName := fmt.Sprintf("%v", normalizeValue(values[2]))
+		colName := fmt.Sprintf("%v", normalizeValue(values[4]))
+		nonUnique := fmt.Sprintf("%v", normalizeValue(values[1])) == "1"
+		indexType := fmt.Sprintf("%v", normalizeValue(values[10]))
+
+		indexCols[keyName] = append(indexCols[keyName], colName)
+		indexInfo[keyName] = IndexInfo{
+			Name:      keyName,
+			NonUnique: nonUnique,
+			Type:      indexType,
 		}
 	}
 
@@ -1181,18 +1206,31 @@ func toolExplainQuery(
 	defer cancel()
 
 	// Switch database if specified
-	if database := strings.TrimSpace(input.Database); database != "" {
+	// Use a single connection to ensure USE affects the query
+	database := strings.TrimSpace(input.Database)
+	explainSQL := "EXPLAIN " + sqlText
+	var rows *sql.Rows
+	var err error
+
+	if database != "" {
 		dbName, err := quoteIdent(database)
 		if err != nil {
 			return nil, ExplainQueryOutput{}, fmt.Errorf("invalid database name: %w", err)
 		}
-		if _, err := db.ExecContext(ctx, "USE "+dbName); err != nil {
+		conn, err := db.Conn(ctx)
+		if err != nil {
+			return nil, ExplainQueryOutput{}, fmt.Errorf("failed to get connection: %w", err)
+		}
+		defer conn.Close()
+
+		if _, err := conn.ExecContext(ctx, "USE "+dbName); err != nil {
 			return nil, ExplainQueryOutput{}, fmt.Errorf("failed to switch database: %w", err)
 		}
+		rows, err = conn.QueryContext(ctx, explainSQL)
+	} else {
+		rows, err = db.QueryContext(ctx, explainSQL)
 	}
 
-	explainSQL := "EXPLAIN " + sqlText
-	rows, err := db.QueryContext(ctx, explainSQL)
 	if err != nil {
 		return nil, ExplainQueryOutput{}, fmt.Errorf("EXPLAIN failed: %w", err)
 	}
