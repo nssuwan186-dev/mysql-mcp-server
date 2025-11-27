@@ -1,0 +1,140 @@
+# GoReleaser configuration for mysql-mcp-server
+# Run: goreleaser release --clean
+
+version: 2
+
+before:
+  hooks:
+    - go mod tidy
+    - go generate ./...
+
+builds:
+  - id: mysql-mcp-server
+    main: ./cmd/mysql-mcp-server
+    binary: mysql-mcp-server
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w
+      - -X main.version={{.Version}}
+      - -X main.commit={{.Commit}}
+      - -X main.date={{.Date}}
+    mod_timestamp: "{{ .CommitTimestamp }}"
+
+archives:
+  - id: default
+    format: tar.gz
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    format_overrides:
+      - goos: windows
+        format: zip
+    files:
+      - README.md
+      - LICENSE
+      - examples/*
+
+checksum:
+  name_template: "checksums.txt"
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-next"
+
+changelog:
+  sort: asc
+  use: github
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+      - "^ci:"
+      - Merge pull request
+      - Merge branch
+  groups:
+    - title: "🚀 Features"
+      regexp: '^.*?feat(\([[:word:]]+\))??!?:.+$'
+      order: 0
+    - title: "🐛 Bug Fixes"
+      regexp: '^.*?fix(\([[:word:]]+\))??!?:.+$'
+      order: 1
+    - title: "🔒 Security"
+      regexp: '^.*?sec(\([[:word:]]+\))??!?:.+$'
+      order: 2
+    - title: "📦 Dependencies"
+      regexp: '^.*?deps(\([[:word:]]+\))??!?:.+$'
+      order: 3
+    - title: "Other"
+      order: 999
+
+brews:
+  - name: mysql-mcp-server
+    repository:
+      owner: askdba
+      name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
+    folder: Formula
+    homepage: "https://github.com/askdba/mysql-mcp-server"
+    description: "A fast, read-only MySQL MCP server for Claude Desktop"
+    license: "Apache-2.0"
+    install: |
+      bin.install "mysql-mcp-server"
+    test: |
+      system "#{bin}/mysql-mcp-server", "--version"
+    dependencies:
+      - name: mysql
+        type: optional
+
+dockers:
+  - image_templates:
+      - "ghcr.io/askdba/mysql-mcp-server:{{ .Version }}"
+      - "ghcr.io/askdba/mysql-mcp-server:{{ .Major }}.{{ .Minor }}"
+      - "ghcr.io/askdba/mysql-mcp-server:{{ .Major }}"
+      - "ghcr.io/askdba/mysql-mcp-server:latest"
+    dockerfile: Dockerfile
+    build_flag_templates:
+      - "--pull"
+      - "--label=org.opencontainers.image.created={{.Date}}"
+      - "--label=org.opencontainers.image.title={{.ProjectName}}"
+      - "--label=org.opencontainers.image.revision={{.FullCommit}}"
+      - "--label=org.opencontainers.image.version={{.Version}}"
+      - "--label=org.opencontainers.image.source={{.GitURL}}"
+      - "--label=org.opencontainers.image.licenses=Apache-2.0"
+      - "--platform=linux/amd64"
+
+release:
+  github:
+    owner: askdba
+    name: mysql-mcp-server
+  draft: false
+  prerelease: auto
+  mode: replace
+  header: |
+    ## MySQL MCP Server {{ .Version }}
+    
+    A fast, read-only MySQL server for the Model Context Protocol (MCP).
+    
+    ### Installation
+    
+    **Homebrew (macOS/Linux):**
+    ```bash
+    brew install askdba/tap/mysql-mcp-server
+    ```
+    
+    **Docker:**
+    ```bash
+    docker pull ghcr.io/askdba/mysql-mcp-server:{{ .Version }}
+    ```
+    
+    **Binary:**
+    Download the appropriate binary for your platform below.
+  footer: |
+    ---
+    **Full Changelog**: https://github.com/askdba/mysql-mcp-server/compare/{{ .PreviousTag }}...{{ .Tag }}
+

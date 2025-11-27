@@ -1,0 +1,15 @@
+{
+  "mcpServers": {
+    "mysql": {
+      "command": "/usr/local/bin/mysql-mcp-server",
+      "env": {
+        "MYSQL_DSN": "mcp:your_password@tcp(localhost:3306)/mysql?parseTime=true",
+        "MYSQL_MAX_ROWS": "200",
+        "MYSQL_QUERY_TIMEOUT_SECONDS": "30",
+        "MYSQL_MCP_EXTENDED": "1",
+        "MYSQL_MCP_JSON_LOGS": "0"
+      }
+    }
+  }
+}
+

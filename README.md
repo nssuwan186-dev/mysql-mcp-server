@@ -22,7 +22,28 @@ This project exposes safe MySQL introspection tools to Claude Desktop via MCP. C
 
 ## Installation
 
-Clone and build:
+### Homebrew (macOS/Linux)
+
+```bash
+brew install askdba/tap/mysql-mcp-server
+```
+
+### Docker
+
+```bash
+docker pull ghcr.io/askdba/mysql-mcp-server:latest
+```
+
+### Download Binary
+
+Download the latest release from [GitHub Releases](https://github.com/askdba/mysql-mcp-server/releases).
+
+Available for:
+- macOS (Intel & Apple Silicon)
+- Linux (amd64 & arm64)
+- Windows (amd64)
+
+### Build from Source
 
 ```bash
 git clone https://github.com/askdba/mysql-mcp-server.git
@@ -30,11 +51,21 @@ cd mysql-mcp-server
 make build
 ```
 
-Binary output:
+Binary output: `bin/mysql-mcp-server`
 
+## Quickstart
+
+Run the interactive setup script:
+
+```bash
+./scripts/quickstart.sh
 ```
-bin/mysql-mcp-server
-```
+
+This will:
+1. Test your MySQL connection
+2. Optionally create a read-only MCP user
+3. Generate your Claude Desktop configuration
+4. Optionally load a test dataset
 
 ## Configuration
 
@@ -359,11 +390,14 @@ make integration
 
 ## Docker
 
+### Using Pre-built Image
+
 ```bash
-docker build -t mysql-mcp-server .
+docker run -e MYSQL_DSN="user:pass@tcp(host:3306)/db?parseTime=true" \
+  ghcr.io/askdba/mysql-mcp-server:latest
 ```
 
-docker-compose:
+### Docker Compose
 
 ```yaml
 version: "3.9"
@@ -377,17 +411,24 @@ services:
       - "3306:3306"
 
   mcp:
-    build: .
+    image: ghcr.io/askdba/mysql-mcp-server:latest
     depends_on:
       - mysql
     environment:
       MYSQL_DSN: "root:rootpass@tcp(mysql:3306)/testdb?parseTime=true"
+      MYSQL_MCP_EXTENDED: "1"
 ```
 
 Run:
 
 ```bash
-docker compose up --build
+docker compose up
+```
+
+### Build Locally
+
+```bash
+docker build -t mysql-mcp-server .
 ```
 
 ## Project Structure
@@ -396,16 +437,57 @@ docker compose up --build
 cmd/mysql-mcp-server/   -> Server entrypoint
 internal/config/        -> Configuration loader
 internal/mysql/         -> MySQL client + tests
+examples/               -> Example configs and test data
+scripts/                -> Quickstart and utility scripts
 bin/                    -> Built binaries
 ```
+
+## Examples
+
+The `examples/` folder contains:
+
+- **`claude_desktop_config.json`** - Example Claude Desktop configuration
+- **`test-dataset.sql`** - Demo database with tables, views, and sample data
+
+Load the test dataset:
+
+```bash
+mysql -u root -p < examples/test-dataset.sql
+```
+
+This creates a `mcp_demo` database with:
+- 5 categories, 13 products, 8 customers
+- 9 orders with 16 order items
+- Views: `order_summary`, `product_inventory`
+- Stored procedure: `GetCustomerOrders`
+- Stored function: `GetProductStock`
 
 ## Development
 
 ```bash
-make fmt
-make run
-make build
+make fmt       # Format code
+make lint      # Run linter
+make test      # Run unit tests
+make build     # Build binary
+make release   # Build release binaries
 ```
+
+## Releasing
+
+Releases are automated via GitHub Actions and GoReleaser.
+
+To create a new release:
+
+```bash
+git tag v1.0.0
+git push origin v1.0.0
+```
+
+This will automatically:
+1. Build binaries for macOS, Linux, and Windows
+2. Create a GitHub Release with changelog
+3. Push Docker image to `ghcr.io/askdba/mysql-mcp-server`
+4. Update Homebrew formula (if configured)
 
 ## License
 
