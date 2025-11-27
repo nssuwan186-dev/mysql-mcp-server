@@ -5,10 +5,28 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
 	"time"
 
 	_ "github.com/go-sql-driver/mysql"
 )
+
+// quoteIdent safely quotes a MySQL identifier, returning an error if the name
+// contains potentially dangerous characters.
+func quoteIdent(name string) (string, error) {
+	if name == "" {
+		return "", fmt.Errorf("identifier cannot be empty")
+	}
+	// Reject identifiers with dangerous characters that could enable SQL injection
+	if strings.ContainsAny(name, " \t\n\r;`\\") {
+		return "", fmt.Errorf("identifier contains invalid characters: %q", name)
+	}
+	// Additional check: reject identifiers that are too long (MySQL limit is 64)
+	if len(name) > 64 {
+		return "", fmt.Errorf("identifier too long: %d characters (max 64)", len(name))
+	}
+	return "`" + name + "`", nil
+}
 
 type Client struct {
 	db           *sql.DB
@@ -44,6 +62,7 @@ func New(cfg Config) (*Client, error) {
 		queryTimeout: time.Duration(cfg.QueryTimeoutS) * time.Second,
 	}, nil
 }
+
 // NewWithDB constructs a Client from an existing *sql.DB.
 // This is mainly useful for tests where we use a sqlmock.DB.
 func NewWithDB(db *sql.DB, cfg Config) (*Client, error) {
@@ -92,10 +111,15 @@ func (c *Client) ListTables(ctx context.Context, database string) ([]string, err
 		return nil, fmt.Errorf("database is required")
 	}
 
+	dbName, err := quoteIdent(database)
+	if err != nil {
+		return nil, fmt.Errorf("invalid database name: %w", err)
+	}
+
 	ctx, cancel := c.withTimeout(ctx)
 	defer cancel()
 
-	if _, err := c.db.ExecContext(ctx, "USE `"+database+"`"); err != nil {
+	if _, err := c.db.ExecContext(ctx, "USE "+dbName); err != nil {
 		return nil, err
 	}
 
@@ -121,14 +145,23 @@ func (c *Client) DescribeTable(ctx context.Context, database, table string) ([]m
 		return nil, fmt.Errorf("database and table are required")
 	}
 
+	dbName, err := quoteIdent(database)
+	if err != nil {
+		return nil, fmt.Errorf("invalid database name: %w", err)
+	}
+	tableName, err := quoteIdent(table)
+	if err != nil {
+		return nil, fmt.Errorf("invalid table name: %w", err)
+	}
+
 	ctx, cancel := c.withTimeout(ctx)
 	defer cancel()
 
-	if _, err := c.db.ExecContext(ctx, "USE `"+database+"`"); err != nil {
+	if _, err := c.db.ExecContext(ctx, "USE "+dbName); err != nil {
 		return nil, err
 	}
 
-	rows, err := c.db.QueryContext(ctx, "DESCRIBE `"+table+"`")
+	rows, err := c.db.QueryContext(ctx, "DESCRIBE "+tableName)
 	if err != nil {
 		return nil, err
 	}

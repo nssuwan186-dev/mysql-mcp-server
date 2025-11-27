@@ -22,8 +22,8 @@ const (
 
 // Global DB handle shared by all tools (safe for concurrent use).
 var (
-	db          *sql.DB
-	maxRows     int
+	db           *sql.DB
+	maxRows      int
 	queryTimeout time.Duration
 )
 
@@ -57,13 +57,13 @@ type DescribeTableInput struct {
 }
 
 type ColumnInfo struct {
-	Name     string `json:"name" jsonschema:"column name"`
-	Type     string `json:"type" jsonschema:"column type"`
-	Null     string `json:"null" jsonschema:"YES if nullable, NO otherwise"`
-	Key      string `json:"key" jsonschema:"key information (PRI, MUL, etc.)"`
-	Default  string `json:"default" jsonschema:"default value, if any"`
-	Extra    string `json:"extra" jsonschema:"extra metadata (auto_increment, etc.)"`
-	Comment  string `json:"comment" jsonschema:"column comment, if any"`
+	Name      string `json:"name" jsonschema:"column name"`
+	Type      string `json:"type" jsonschema:"column type"`
+	Null      string `json:"null" jsonschema:"YES if nullable, NO otherwise"`
+	Key       string `json:"key" jsonschema:"key information (PRI, MUL, etc.)"`
+	Default   string `json:"default" jsonschema:"default value, if any"`
+	Extra     string `json:"extra" jsonschema:"extra metadata (auto_increment, etc.)"`
+	Comment   string `json:"comment" jsonschema:"column comment, if any"`
 	Collation string `json:"collation" jsonschema:"column collation, if any"`
 }
 
@@ -74,7 +74,7 @@ type DescribeTableOutput struct {
 type RunQueryInput struct {
 	SQL      string `json:"sql" jsonschema:"SQL query to execute; must start with SELECT, SHOW, DESCRIBE, or EXPLAIN"`
 	MaxRows  *int   `json:"max_rows,omitempty" jsonschema:"optional row limit overriding the default max rows"`
-	Database string `json:"database,omitempty" jsonschema:"optional database name (currently informational only)"`
+	Database string `json:"database,omitempty" jsonschema:"optional database name to USE before running the query"`
 }
 
 type QueryResult struct {
@@ -96,17 +96,21 @@ func getEnvInt(key string, def int) int {
 	return n
 }
 
-func quoteIdent(name string) string {
-	// Very simple identifier quoting. We also do a basic sanity check
-	// to avoid obviously dangerous values.
+// quoteIdent safely quotes a MySQL identifier, returning an error if the name
+// contains potentially dangerous characters.
+func quoteIdent(name string) (string, error) {
 	if name == "" {
-		return ""
+		return "", fmt.Errorf("identifier cannot be empty")
 	}
-	if strings.ContainsAny(name, " \t\n\r;`") {
-		// fall back to plain; better to error earlier in callers if needed
-		return name
+	// Reject identifiers with dangerous characters that could enable SQL injection
+	if strings.ContainsAny(name, " \t\n\r;`\\") {
+		return "", fmt.Errorf("identifier contains invalid characters: %q", name)
 	}
-	return "`" + name + "`"
+	// Additional check: reject identifiers that are too long (MySQL limit is 64)
+	if len(name) > 64 {
+		return "", fmt.Errorf("identifier too long: %d characters (max 64)", len(name))
+	}
+	return "`" + name + "`", nil
 }
 
 // convert raw DB value into something JSON-friendly.
@@ -189,7 +193,10 @@ func toolListTables(
 	ctx, cancel := context.WithTimeout(ctx, queryTimeout)
 	defer cancel()
 
-	dbName := quoteIdent(input.Database)
+	dbName, err := quoteIdent(input.Database)
+	if err != nil {
+		return nil, ListTablesOutput{}, fmt.Errorf("invalid database name: %w", err)
+	}
 	query := fmt.Sprintf("SHOW TABLES FROM %s", dbName)
 
 	rows, err := db.QueryContext(ctx, query)
@@ -232,8 +239,14 @@ func toolDescribeTable(
 	ctx, cancel := context.WithTimeout(ctx, queryTimeout)
 	defer cancel()
 
-	dbName := quoteIdent(input.Database)
-	tableName := quoteIdent(input.Table)
+	dbName, err := quoteIdent(input.Database)
+	if err != nil {
+		return nil, DescribeTableOutput{}, fmt.Errorf("invalid database name: %w", err)
+	}
+	tableName, err := quoteIdent(input.Table)
+	if err != nil {
+		return nil, DescribeTableOutput{}, fmt.Errorf("invalid table name: %w", err)
+	}
 
 	// Using SHOW FULL COLUMNS to get richer metadata.
 	query := fmt.Sprintf("SHOW FULL COLUMNS FROM %s.%s", dbName, tableName)
@@ -297,6 +310,17 @@ func toolRunQuery(
 
 	ctx, cancel := context.WithTimeout(ctx, queryTimeout)
 	defer cancel()
+
+	// Switch to the specified database if provided
+	if database := strings.TrimSpace(input.Database); database != "" {
+		dbName, err := quoteIdent(database)
+		if err != nil {
+			return nil, QueryResult{}, fmt.Errorf("invalid database name: %w", err)
+		}
+		if _, err := db.ExecContext(ctx, "USE "+dbName); err != nil {
+			return nil, QueryResult{}, fmt.Errorf("failed to switch database: %w", err)
+		}
+	}
 
 	rows, err := db.QueryContext(ctx, sqlText)
 	if err != nil {

@@ -50,6 +50,25 @@ integration:
 	go test -tags=integration ./internal/mysql -v
 
 # ----------------------------------------
+# Code Quality
+# ----------------------------------------
+
+fmt:
+	@echo "$(CYAN)🎨 Formatting Go code...$(RESET)"
+	go fmt ./...
+	@echo "$(GREEN)✔ Code formatted$(RESET)"
+
+lint:
+	@echo "$(CYAN)🔍 Running linter...$(RESET)"
+	@if command -v golangci-lint >/dev/null 2>&1; then \
+		golangci-lint run ./...; \
+	else \
+		echo "$(YELLOW)⚠ golangci-lint not installed, running go vet instead$(RESET)"; \
+		go vet ./...; \
+	fi
+	@echo "$(GREEN)✔ Lint complete$(RESET)"
+
+# ----------------------------------------
 # Dependencies
 # ----------------------------------------
 
@@ -90,6 +109,8 @@ help:
 	@echo "$(CYAN)  make clean        $(RESET)- Remove build artifacts"
 	@echo "$(CYAN)  make test         $(RESET)- Run unit tests"
 	@echo "$(CYAN)  make integration  $(RESET)- Run integration tests (Docker)"
+	@echo "$(CYAN)  make fmt          $(RESET)- Format Go code"
+	@echo "$(CYAN)  make lint         $(RESET)- Run linter"
 	@echo "$(CYAN)  make deps         $(RESET)- Download and tidy modules"
 	@echo "$(CYAN)  make docker       $(RESET)- Build Docker image"
 	@echo "$(CYAN)  make release      $(RESET)- Build multi-platform binaries"
