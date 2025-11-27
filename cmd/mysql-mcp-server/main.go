@@ -82,6 +82,28 @@ type QueryResult struct {
 	Rows    [][]interface{} `json:"rows" jsonschema:"rows of values"`
 }
 
+type PingInput struct{}
+
+type PingOutput struct {
+	Success   bool   `json:"success" jsonschema:"true if the database is reachable"`
+	LatencyMs int64  `json:"latency_ms" jsonschema:"round-trip latency in milliseconds"`
+	Message   string `json:"message" jsonschema:"status message"`
+}
+
+type ServerInfoInput struct{}
+
+type ServerInfoOutput struct {
+	Version         string `json:"version" jsonschema:"MySQL server version"`
+	VersionComment  string `json:"version_comment" jsonschema:"MySQL version comment (e.g., MySQL Community Server)"`
+	Uptime          int64  `json:"uptime_seconds" jsonschema:"server uptime in seconds"`
+	CurrentDatabase string `json:"current_database" jsonschema:"currently selected database, if any"`
+	CurrentUser     string `json:"current_user" jsonschema:"current MySQL user"`
+	CharacterSet    string `json:"character_set" jsonschema:"server character set"`
+	Collation       string `json:"collation" jsonschema:"server collation"`
+	MaxConnections  int    `json:"max_connections" jsonschema:"maximum allowed connections"`
+	ThreadsConnected int   `json:"threads_connected" jsonschema:"current number of connected threads"`
+}
+
 // ===== Utility: env config & helpers =====
 
 func getEnvInt(key string, def int) int {
@@ -366,6 +388,134 @@ func toolRunQuery(
 	return nil, result, nil
 }
 
+func toolPing(
+	ctx context.Context,
+	req *mcp.CallToolRequest,
+	input PingInput,
+) (*mcp.CallToolResult, PingOutput, error) {
+
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	start := time.Now()
+	err := db.PingContext(ctx)
+	latency := time.Since(start).Milliseconds()
+
+	if err != nil {
+		return nil, PingOutput{
+			Success:   false,
+			LatencyMs: latency,
+			Message:   fmt.Sprintf("ping failed: %v", err),
+		}, nil
+	}
+
+	return nil, PingOutput{
+		Success:   true,
+		LatencyMs: latency,
+		Message:   "pong",
+	}, nil
+}
+
+func toolServerInfo(
+	ctx context.Context,
+	req *mcp.CallToolRequest,
+	input ServerInfoInput,
+) (*mcp.CallToolResult, ServerInfoOutput, error) {
+
+	ctx, cancel := context.WithTimeout(ctx, queryTimeout)
+	defer cancel()
+
+	out := ServerInfoOutput{}
+
+	// Get version and version comment
+	row := db.QueryRowContext(ctx, "SELECT VERSION()")
+	if err := row.Scan(&out.Version); err != nil {
+		return nil, ServerInfoOutput{}, fmt.Errorf("failed to get version: %w", err)
+	}
+
+	// Get various server variables in one query
+	rows, err := db.QueryContext(ctx, `
+		SELECT VARIABLE_NAME, VARIABLE_VALUE 
+		FROM performance_schema.global_variables 
+		WHERE VARIABLE_NAME IN (
+			'version_comment', 
+			'character_set_server', 
+			'collation_server', 
+			'max_connections'
+		)
+	`)
+	if err != nil {
+		// Fallback for older MySQL or restricted permissions
+		rows, err = db.QueryContext(ctx, `
+			SHOW VARIABLES WHERE Variable_name IN (
+				'version_comment', 
+				'character_set_server', 
+				'collation_server', 
+				'max_connections'
+			)
+		`)
+		if err != nil {
+			return nil, ServerInfoOutput{}, fmt.Errorf("failed to get server variables: %w", err)
+		}
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var name, value string
+		if err := rows.Scan(&name, &value); err != nil {
+			continue
+		}
+		switch strings.ToLower(name) {
+		case "version_comment":
+			out.VersionComment = value
+		case "character_set_server":
+			out.CharacterSet = value
+		case "collation_server":
+			out.Collation = value
+		case "max_connections":
+			out.MaxConnections, _ = strconv.Atoi(value)
+		}
+	}
+
+	// Get uptime and threads connected from status
+	statusRows, err := db.QueryContext(ctx, `
+		SELECT VARIABLE_NAME, VARIABLE_VALUE 
+		FROM performance_schema.global_status 
+		WHERE VARIABLE_NAME IN ('Uptime', 'Threads_connected')
+	`)
+	if err != nil {
+		// Fallback for older MySQL or restricted permissions
+		statusRows, err = db.QueryContext(ctx, `
+			SHOW GLOBAL STATUS WHERE Variable_name IN ('Uptime', 'Threads_connected')
+		`)
+		if err != nil {
+			return nil, ServerInfoOutput{}, fmt.Errorf("failed to get server status: %w", err)
+		}
+	}
+	defer statusRows.Close()
+
+	for statusRows.Next() {
+		var name, value string
+		if err := statusRows.Scan(&name, &value); err != nil {
+			continue
+		}
+		switch strings.ToLower(name) {
+		case "uptime":
+			out.Uptime, _ = strconv.ParseInt(value, 10, 64)
+		case "threads_connected":
+			out.ThreadsConnected, _ = strconv.Atoi(value)
+		}
+	}
+
+	// Get current user and database
+	row = db.QueryRowContext(ctx, "SELECT CURRENT_USER(), IFNULL(DATABASE(), '')")
+	if err := row.Scan(&out.CurrentUser, &out.CurrentDatabase); err != nil {
+		return nil, ServerInfoOutput{}, fmt.Errorf("failed to get current user/database: %w", err)
+	}
+
+	return nil, out, nil
+}
+
 // ===== main =====
 
 func main() {
@@ -422,6 +572,16 @@ func main() {
 		Name:        "run_query",
 		Description: "Execute a read-only SQL query (SELECT/SHOW/DESCRIBE/EXPLAIN only)",
 	}, toolRunQuery)
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "ping",
+		Description: "Test database connectivity and measure latency",
+	}, toolPing)
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "server_info",
+		Description: "Get MySQL server version, uptime, and configuration details",
+	}, toolServerInfo)
 
 	// ---- Run over stdio ----
 	if err := server.Run(context.Background(), &mcp.StdioTransport{}); err != nil {

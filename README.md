@@ -12,6 +12,8 @@ This project exposes safe MySQL introspection tools to Claude Desktop via MCP. C
   - list_tables
   - describe_table
   - run_query (safe and row-limited)
+  - ping (connectivity check with latency)
+  - server_info (version, uptime, config)
 - Supports MySQL 5.7, 8.0, 8.4
 - Query timeouts
 - Single Go binary
@@ -115,9 +117,45 @@ Input:
 { "sql": "SELECT id, name FROM users LIMIT 5" }
 ```
 
+Optional database context:
+
+```json
+{ "sql": "SELECT * FROM users LIMIT 5", "database": "myapp" }
+```
+
 - Rejects non-read-only SQL
 - Enforces row limit
 - Enforces timeout
+
+### ping
+
+Tests database connectivity and returns latency.
+
+Output:
+
+```json
+{ "success": true, "latency_ms": 2, "message": "pong" }
+```
+
+### server_info
+
+Returns MySQL server details.
+
+Output:
+
+```json
+{
+  "version": "8.0.36",
+  "version_comment": "MySQL Community Server - GPL",
+  "uptime_seconds": 86400,
+  "current_database": "myapp",
+  "current_user": "mcp@localhost",
+  "character_set": "utf8mb4",
+  "collation": "utf8mb4_0900_ai_ci",
+  "max_connections": 151,
+  "threads_connected": 5
+}
+```
 
 ## Security Model
 
