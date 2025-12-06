@@ -1211,7 +1211,7 @@ func toolRunQuery(
 	if database != "" {
 		var dbName string
 		dbName, err = quoteIdent(database)
-		if err != nil {
+	if err != nil {
 			return nil, QueryResult{}, fmt.Errorf("invalid database name: %w", err)
 		}
 		// Use a single connection to ensure USE affects the query
@@ -1970,6 +1970,9 @@ func toolListViews(
 			break
 		}
 	}
+	if err := rows.Err(); err != nil {
+		return nil, ListViewsOutput{}, err
+	}
 
 	return nil, out, nil
 }
@@ -2004,6 +2007,9 @@ func toolListTriggers(
 		if len(out.Triggers) >= maxRows {
 			break
 		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, ListTriggersOutput{}, err
 	}
 
 	return nil, out, nil
@@ -2041,6 +2047,9 @@ func toolListProcedures(
 			break
 		}
 	}
+	if err := rows.Err(); err != nil {
+		return nil, ListProceduresOutput{}, err
+	}
 
 	return nil, out, nil
 }
@@ -2076,6 +2085,9 @@ func toolListFunctions(
 		if len(out.Functions) >= maxRows {
 			break
 		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, ListFunctionsOutput{}, err
 	}
 
 	return nil, out, nil
@@ -2118,6 +2130,9 @@ func toolListPartitions(
 		if len(out.Partitions) >= maxRows {
 			break
 		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, ListPartitionsOutput{}, err
 	}
 
 	return nil, out, nil
@@ -2168,6 +2183,9 @@ func toolDatabaseSize(
 		if len(out.Databases) >= maxRows {
 			break
 		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, DatabaseSizeOutput{}, err
 	}
 
 	return nil, out, nil
@@ -2227,6 +2245,9 @@ func toolTableSize(
 			break
 		}
 	}
+	if err := rows.Err(); err != nil {
+		return nil, TableSizeOutput{}, err
+	}
 
 	return nil, out, nil
 }
@@ -2281,6 +2302,9 @@ func toolForeignKeys(
 			break
 		}
 	}
+	if err := rows.Err(); err != nil {
+		return nil, ForeignKeysOutput{}, err
+	}
 
 	return nil, out, nil
 }
@@ -2321,6 +2345,9 @@ func toolListStatus(
 			break
 		}
 	}
+	if err := rows.Err(); err != nil {
+		return nil, ListStatusOutput{}, err
+	}
 
 	return nil, out, nil
 }
@@ -2360,6 +2387,9 @@ func toolListVariables(
 		if len(out.Variables) >= maxRows {
 			break
 		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, ListVariablesOutput{}, err
 	}
 
 	return nil, out, nil
