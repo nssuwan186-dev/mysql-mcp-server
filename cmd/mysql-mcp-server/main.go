@@ -138,6 +138,16 @@ func (cm *ConnectionManager) Close() {
 	}
 }
 
+// getDB returns the active database connection in a thread-safe manner.
+// This should be used instead of accessing the global db variable directly
+// to avoid data races when connections are switched.
+func getDB() *sql.DB {
+	if connManager != nil {
+		return connManager.GetActiveDB()
+	}
+	return db
+}
+
 // maskDSN hides password in DSN for display
 func maskDSN(dsn string) string {
 	// DSN format: user:password@tcp(host:port)/database
@@ -873,7 +883,7 @@ func toolListDatabases(
 	ctx, cancel := context.WithTimeout(ctx, queryTimeout)
 	defer cancel()
 
-	rows, err := db.QueryContext(ctx, "SHOW DATABASES")
+	rows, err := getDB().QueryContext(ctx, "SHOW DATABASES")
 	if err != nil {
 		return nil, ListDatabasesOutput{}, fmt.Errorf("SHOW DATABASES failed: %w", err)
 	}
@@ -916,7 +926,7 @@ func toolListTables(
 	}
 	query := fmt.Sprintf("SHOW TABLES FROM %s", dbName)
 
-	rows, err := db.QueryContext(ctx, query)
+	rows, err := getDB().QueryContext(ctx, query)
 	if err != nil {
 		return nil, ListTablesOutput{}, fmt.Errorf("SHOW TABLES failed: %w", err)
 	}
@@ -968,7 +978,7 @@ func toolDescribeTable(
 	// Using SHOW FULL COLUMNS to get richer metadata.
 	query := fmt.Sprintf("SHOW FULL COLUMNS FROM %s.%s", dbName, tableName)
 
-	rows, err := db.QueryContext(ctx, query)
+	rows, err := getDB().QueryContext(ctx, query)
 	if err != nil {
 		return nil, DescribeTableOutput{}, fmt.Errorf("SHOW FULL COLUMNS failed: %w", err)
 	}
@@ -1044,29 +1054,32 @@ func toolRunQuery(
 	defer cancel()
 
 	// Switch to the specified database if provided
-	// Use a transaction to ensure USE and query run on the same connection
+	// Use a single connection to ensure USE and query run on the same connection
 	database := strings.TrimSpace(input.Database)
 	var rows *sql.Rows
 	var err error
 
 	if database != "" {
-		dbName, err := quoteIdent(database)
-		if err != nil {
+		var dbName string
+		dbName, err = quoteIdent(database)
+	if err != nil {
 			return nil, QueryResult{}, fmt.Errorf("invalid database name: %w", err)
 		}
 		// Use a single connection to ensure USE affects the query
-		conn, err := db.Conn(ctx)
+		var conn *sql.Conn
+		conn, err = getDB().Conn(ctx)
 		if err != nil {
 			return nil, QueryResult{}, fmt.Errorf("failed to get connection: %w", err)
 		}
 		defer conn.Close()
 
-		if _, err := conn.ExecContext(ctx, "USE "+dbName); err != nil {
+		_, err = conn.ExecContext(ctx, "USE "+dbName)
+		if err != nil {
 			return nil, QueryResult{}, fmt.Errorf("failed to switch database: %w", err)
 		}
 		rows, err = conn.QueryContext(ctx, sqlText)
 	} else {
-		rows, err = db.QueryContext(ctx, sqlText)
+		rows, err = getDB().QueryContext(ctx, sqlText)
 	}
 
 	if err != nil {
@@ -1154,7 +1167,7 @@ func toolPing(
 	defer cancel()
 
 	start := time.Now()
-	err := db.PingContext(ctx)
+	err := getDB().PingContext(ctx)
 	latency := time.Since(start).Milliseconds()
 
 	if err != nil {
@@ -1184,13 +1197,13 @@ func toolServerInfo(
 	out := ServerInfoOutput{}
 
 	// Get version and version comment
-	row := db.QueryRowContext(ctx, "SELECT VERSION()")
+	row := getDB().QueryRowContext(ctx, "SELECT VERSION()")
 	if err := row.Scan(&out.Version); err != nil {
 		return nil, ServerInfoOutput{}, fmt.Errorf("failed to get version: %w", err)
 	}
 
 	// Get various server variables in one query
-	rows, err := db.QueryContext(ctx, `
+	rows, err := getDB().QueryContext(ctx, `
 		SELECT VARIABLE_NAME, VARIABLE_VALUE 
 		FROM performance_schema.global_variables 
 		WHERE VARIABLE_NAME IN (
@@ -1202,7 +1215,7 @@ func toolServerInfo(
 	`)
 	if err != nil {
 		// Fallback for older MySQL or restricted permissions
-		rows, err = db.QueryContext(ctx, `
+		rows, err = getDB().QueryContext(ctx, `
 			SHOW VARIABLES WHERE Variable_name IN (
 				'version_comment', 
 				'character_set_server', 
@@ -1234,14 +1247,14 @@ func toolServerInfo(
 	}
 
 	// Get uptime and threads connected from status
-	statusRows, err := db.QueryContext(ctx, `
+	statusRows, err := getDB().QueryContext(ctx, `
 		SELECT VARIABLE_NAME, VARIABLE_VALUE 
 		FROM performance_schema.global_status 
 		WHERE VARIABLE_NAME IN ('Uptime', 'Threads_connected')
 	`)
 	if err != nil {
 		// Fallback for older MySQL or restricted permissions
-		statusRows, err = db.QueryContext(ctx, `
+		statusRows, err = getDB().QueryContext(ctx, `
 			SHOW GLOBAL STATUS WHERE Variable_name IN ('Uptime', 'Threads_connected')
 		`)
 		if err != nil {
@@ -1264,7 +1277,7 @@ func toolServerInfo(
 	}
 
 	// Get current user and database
-	row = db.QueryRowContext(ctx, "SELECT CURRENT_USER(), IFNULL(DATABASE(), '')")
+	row = getDB().QueryRowContext(ctx, "SELECT CURRENT_USER(), IFNULL(DATABASE(), '')")
 	if err := row.Scan(&out.CurrentUser, &out.CurrentDatabase); err != nil {
 		return nil, ServerInfoOutput{}, fmt.Errorf("failed to get current user/database: %w", err)
 	}
@@ -1323,12 +1336,11 @@ func toolUseConnection(
 		}, nil
 	}
 
-	// Update the global db reference
-	db = connManager.GetActiveDB()
+	// Note: No need to update global db - getDB() safely retrieves the active connection
 
 	// Get current database
 	var currentDB sql.NullString
-	db.QueryRowContext(ctx, "SELECT DATABASE()").Scan(&currentDB)
+	getDB().QueryRowContext(ctx, "SELECT DATABASE()").Scan(&currentDB)
 
 	logInfo("switched connection", map[string]interface{}{
 		"connection": input.Name,
@@ -1409,7 +1421,7 @@ func toolVectorSearch(
 
 	query += fmt.Sprintf(" ORDER BY _distance ASC LIMIT %d", limit)
 
-	rows, err := db.QueryContext(ctx, query)
+	rows, err := getDB().QueryContext(ctx, query)
 	if err != nil {
 		// Check if it's a vector support error
 		if strings.Contains(err.Error(), "DISTANCE") || strings.Contains(err.Error(), "STRING_TO_VECTOR") {
@@ -1474,7 +1486,7 @@ func toolVectorInfo(
 
 	// Check MySQL version for vector support
 	var version string
-	if err := db.QueryRowContext(ctx, "SELECT VERSION()").Scan(&version); err != nil {
+	if err := getDB().QueryRowContext(ctx, "SELECT VERSION()").Scan(&version); err != nil {
 		return nil, VectorInfoOutput{}, fmt.Errorf("failed to get version: %w", err)
 	}
 	out.MySQLVersion = version
@@ -1500,7 +1512,7 @@ func toolVectorInfo(
 		args = append(args, input.Table)
 	}
 
-	rows, err := db.QueryContext(ctx, query, args...)
+	rows, err := getDB().QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, VectorInfoOutput{}, fmt.Errorf("failed to query vector columns: %w", err)
 	}
@@ -1529,7 +1541,7 @@ func toolVectorInfo(
 			WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? AND COLUMN_NAME = ?
 		`)
 		var indexName, indexType sql.NullString
-		db.QueryRowContext(ctx, indexQuery, input.Database, tableName, colName).Scan(&indexName, &indexType)
+		getDB().QueryRowContext(ctx, indexQuery, input.Database, tableName, colName).Scan(&indexName, &indexType)
 		info.IndexName = indexName.String
 		info.IndexType = indexType.String
 
@@ -1586,7 +1598,7 @@ func toolListIndexes(
 	defer cancel()
 
 	query := fmt.Sprintf("SHOW INDEX FROM %s.%s", dbName, tableName)
-	rows, err := db.QueryContext(ctx, query)
+	rows, err := getDB().QueryContext(ctx, query)
 	if err != nil {
 		return nil, ListIndexesOutput{}, fmt.Errorf("SHOW INDEX failed: %w", err)
 	}
@@ -1672,7 +1684,7 @@ func toolShowCreateTable(
 
 	query := fmt.Sprintf("SHOW CREATE TABLE %s.%s", dbName, tableName)
 	var tbl, createStmt string
-	if err := db.QueryRowContext(ctx, query).Scan(&tbl, &createStmt); err != nil {
+	if err := getDB().QueryRowContext(ctx, query).Scan(&tbl, &createStmt); err != nil {
 		return nil, ShowCreateTableOutput{}, fmt.Errorf("SHOW CREATE TABLE failed: %w", err)
 	}
 
@@ -1706,22 +1718,25 @@ func toolExplainQuery(
 	var err error
 
 	if database != "" {
-		dbName, err := quoteIdent(database)
+		var dbName string
+		dbName, err = quoteIdent(database)
 		if err != nil {
 			return nil, ExplainQueryOutput{}, fmt.Errorf("invalid database name: %w", err)
 		}
-		conn, err := db.Conn(ctx)
+		var conn *sql.Conn
+		conn, err = getDB().Conn(ctx)
 		if err != nil {
 			return nil, ExplainQueryOutput{}, fmt.Errorf("failed to get connection: %w", err)
 		}
 		defer conn.Close()
 
-		if _, err := conn.ExecContext(ctx, "USE "+dbName); err != nil {
+		_, err = conn.ExecContext(ctx, "USE "+dbName)
+		if err != nil {
 			return nil, ExplainQueryOutput{}, fmt.Errorf("failed to switch database: %w", err)
 		}
 		rows, err = conn.QueryContext(ctx, explainSQL)
 	} else {
-		rows, err = db.QueryContext(ctx, explainSQL)
+		rows, err = getDB().QueryContext(ctx, explainSQL)
 	}
 
 	if err != nil {
@@ -1765,7 +1780,7 @@ func toolListViews(
 
 	query := `SELECT TABLE_NAME, DEFINER, SECURITY_TYPE, IS_UPDATABLE 
 		FROM information_schema.VIEWS WHERE TABLE_SCHEMA = ?`
-	rows, err := db.QueryContext(ctx, query, input.Database)
+	rows, err := getDB().QueryContext(ctx, query, input.Database)
 	if err != nil {
 		return nil, ListViewsOutput{}, fmt.Errorf("query failed: %w", err)
 	}
@@ -1800,7 +1815,7 @@ func toolListTriggers(
 
 	query := `SELECT TRIGGER_NAME, EVENT_MANIPULATION, EVENT_OBJECT_TABLE, ACTION_TIMING, 
 		LEFT(ACTION_STATEMENT, 200) FROM information_schema.TRIGGERS WHERE TRIGGER_SCHEMA = ?`
-	rows, err := db.QueryContext(ctx, query, input.Database)
+	rows, err := getDB().QueryContext(ctx, query, input.Database)
 	if err != nil {
 		return nil, ListTriggersOutput{}, fmt.Errorf("query failed: %w", err)
 	}
@@ -1836,7 +1851,7 @@ func toolListProcedures(
 	query := `SELECT ROUTINE_NAME, DEFINER, CREATED, LAST_ALTERED, 
 		IFNULL(PARAMETER_STYLE, '') FROM information_schema.ROUTINES 
 		WHERE ROUTINE_SCHEMA = ? AND ROUTINE_TYPE = 'PROCEDURE'`
-	rows, err := db.QueryContext(ctx, query, input.Database)
+	rows, err := getDB().QueryContext(ctx, query, input.Database)
 	if err != nil {
 		return nil, ListProceduresOutput{}, fmt.Errorf("query failed: %w", err)
 	}
@@ -1872,7 +1887,7 @@ func toolListFunctions(
 	query := `SELECT ROUTINE_NAME, DEFINER, DTD_IDENTIFIER, CREATED 
 		FROM information_schema.ROUTINES 
 		WHERE ROUTINE_SCHEMA = ? AND ROUTINE_TYPE = 'FUNCTION'`
-	rows, err := db.QueryContext(ctx, query, input.Database)
+	rows, err := getDB().QueryContext(ctx, query, input.Database)
 	if err != nil {
 		return nil, ListFunctionsOutput{}, fmt.Errorf("query failed: %w", err)
 	}
@@ -1909,7 +1924,7 @@ func toolListPartitions(
 		PARTITION_DESCRIPTION, TABLE_ROWS, DATA_LENGTH 
 		FROM information_schema.PARTITIONS 
 		WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? AND PARTITION_NAME IS NOT NULL`
-	rows, err := db.QueryContext(ctx, query, input.Database, input.Table)
+	rows, err := getDB().QueryContext(ctx, query, input.Database, input.Table)
 	if err != nil {
 		return nil, ListPartitionsOutput{}, fmt.Errorf("query failed: %w", err)
 	}
@@ -1961,9 +1976,9 @@ func toolDatabaseSize(
 	var rows *sql.Rows
 	var err error
 	if input.Database != "" {
-		rows, err = db.QueryContext(ctx, query, input.Database)
+		rows, err = getDB().QueryContext(ctx, query, input.Database)
 	} else {
-		rows, err = db.QueryContext(ctx, query)
+		rows, err = getDB().QueryContext(ctx, query)
 	}
 	if err != nil {
 		return nil, DatabaseSizeOutput{}, fmt.Errorf("query failed: %w", err)
@@ -2014,7 +2029,7 @@ func toolTableSize(
 	}
 	query += " ORDER BY total_mb DESC"
 
-	rows, err := db.QueryContext(ctx, query, args...)
+	rows, err := getDB().QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, TableSizeOutput{}, fmt.Errorf("query failed: %w", err)
 	}
@@ -2073,7 +2088,7 @@ func toolForeignKeys(
 		args = append(args, input.Table)
 	}
 
-	rows, err := db.QueryContext(ctx, query, args...)
+	rows, err := getDB().QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, ForeignKeysOutput{}, fmt.Errorf("query failed: %w", err)
 	}
@@ -2113,9 +2128,9 @@ func toolListStatus(
 	var rows *sql.Rows
 	var err error
 	if input.Pattern != "" {
-		rows, err = db.QueryContext(ctx, query, input.Pattern)
+		rows, err = getDB().QueryContext(ctx, query, input.Pattern)
 	} else {
-		rows, err = db.QueryContext(ctx, query)
+		rows, err = getDB().QueryContext(ctx, query)
 	}
 	if err != nil {
 		return nil, ListStatusOutput{}, fmt.Errorf("SHOW STATUS failed: %w", err)
@@ -2153,9 +2168,9 @@ func toolListVariables(
 	var rows *sql.Rows
 	var err error
 	if input.Pattern != "" {
-		rows, err = db.QueryContext(ctx, query, input.Pattern)
+		rows, err = getDB().QueryContext(ctx, query, input.Pattern)
 	} else {
-		rows, err = db.QueryContext(ctx, query)
+		rows, err = getDB().QueryContext(ctx, query)
 	}
 	if err != nil {
 		return nil, ListVariablesOutput{}, fmt.Errorf("SHOW VARIABLES failed: %w", err)
