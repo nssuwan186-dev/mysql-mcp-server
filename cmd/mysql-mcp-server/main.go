@@ -1384,10 +1384,13 @@ func toolVectorSearch(
 	ctx, cancel := context.WithTimeout(ctx, queryTimeout)
 	defer cancel()
 
-	// Set default limit
+	// Set default limit, cap to maxRows for safety
 	limit := input.Limit
-	if limit <= 0 || limit > maxRows {
-		limit = 10
+	if limit <= 0 {
+		limit = 10 // sensible default
+	}
+	if limit > maxRows {
+		limit = maxRows // cap to configured maximum
 	}
 
 	// Build vector string for MySQL
