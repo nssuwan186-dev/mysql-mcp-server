@@ -1338,18 +1338,30 @@ func toolUseConnection(
 
 	// Note: No need to update global db - getDB() safely retrieves the active connection
 
-	// Get current database
+	// Get current database (informational, don't fail if this errors)
 	var currentDB sql.NullString
-	getDB().QueryRowContext(ctx, "SELECT DATABASE()").Scan(&currentDB)
+	var dbQueryErr error
+	if err := getDB().QueryRowContext(ctx, "SELECT DATABASE()").Scan(&currentDB); err != nil {
+		dbQueryErr = err
+		logWarn("failed to get current database after connection switch", map[string]interface{}{
+			"connection": input.Name,
+			"error":      err.Error(),
+		})
+	}
 
 	logInfo("switched connection", map[string]interface{}{
 		"connection": input.Name,
 	})
 
+	message := fmt.Sprintf("Switched to connection '%s'", input.Name)
+	if dbQueryErr != nil {
+		message += " (note: could not determine current database)"
+	}
+
 	return nil, UseConnectionOutput{
 		Success:  true,
 		Active:   input.Name,
-		Message:  fmt.Sprintf("Switched to connection '%s'", input.Name),
+		Message:  message,
 		Database: currentDB.String,
 	}, nil
 }
