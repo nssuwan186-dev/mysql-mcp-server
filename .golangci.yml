@@ -1,0 +1,91 @@
+# golangci-lint configuration
+# https://golangci-lint.run/usage/configuration/
+
+run:
+  timeout: 5m
+  tests: true
+  modules-download-mode: readonly
+
+linters:
+  enable:
+    # Default linters
+    - errcheck
+    - gosimple
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+    
+    # Additional recommended linters
+    - bodyclose      # Checks whether HTTP response body is closed
+    - contextcheck   # Check for context in first param
+    - durationcheck  # Check for wrong time duration usage
+    - errorlint      # Find code that will cause issues with error wrapping
+    - exportloopref  # Check for pointers to enclosing loop variables
+    - gocritic       # Opinionated linter for Go
+    - gofmt          # Checks whether code was gofmt-ed
+    - gosec          # Inspects source code for security problems
+    - misspell       # Finds commonly misspelled English words
+    - nilerr         # Finds code that returns nil even if error is non-nil
+    - noctx          # Finds HTTP requests without context.Context
+    - prealloc       # Finds slice declarations that could be preallocated
+    - sqlclosecheck  # Checks that sql.Rows and sql.Stmt are closed
+    - unconvert      # Remove unnecessary type conversions
+    - unparam        # Reports unused function parameters
+    - whitespace     # Detects leading and trailing whitespace
+
+linters-settings:
+  errcheck:
+    check-type-assertions: true
+    check-blank: true
+    exclude-functions:
+      - (io.Closer).Close
+      - (*os.File).Close
+      - (net/http.ResponseWriter).Write
+
+  gocritic:
+    enabled-tags:
+      - diagnostic
+      - performance
+    disabled-checks:
+      - commentFormatting  # Allow flexible comment formatting
+      - ifElseChain
+
+  gosec:
+    excludes:
+      - G104  # Allow unhandled errors in some cases
+      - G304  # Potential file inclusion via variable (we validate paths)
+
+  govet:
+    enable:
+      - shadow
+
+  misspell:
+    locale: US
+
+  staticcheck:
+    checks:
+      - all
+
+issues:
+  exclude-rules:
+    # Exclude some linters from running on tests files
+    - path: _test\.go
+      linters:
+        - errcheck
+        - gocritic
+        - gosec
+
+    # Exclude shadow checking in tests
+    - path: _test\.go
+      text: "shadow"
+
+    # Allow complex functions in main.go (tool handlers)
+    - path: cmd/mysql-mcp-server/main.go
+      linters:
+        - funlen
+        - gocognit
+
+  max-issues-per-linter: 50
+  max-same-issues: 5
+

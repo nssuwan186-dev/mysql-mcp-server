@@ -58,6 +58,15 @@ fmt:
 	go fmt ./...
 	@echo "$(GREEN)✔ Code formatted$(RESET)"
 
+fmt-check:
+	@echo "$(CYAN)🔍 Checking code formatting...$(RESET)"
+	@if [ -n "$$(gofmt -l .)" ]; then \
+		echo "$(RED)✘ Code is not formatted:$(RESET)"; \
+		gofmt -l .; \
+		exit 1; \
+	fi
+	@echo "$(GREEN)✔ Code is properly formatted$(RESET)"
+
 lint:
 	@echo "$(CYAN)🔍 Running linter...$(RESET)"
 	@if command -v golangci-lint >/dev/null 2>&1; then \
@@ -67,6 +76,48 @@ lint:
 		go vet ./...; \
 	fi
 	@echo "$(GREEN)✔ Lint complete$(RESET)"
+
+vet:
+	@echo "$(CYAN)🔍 Running go vet...$(RESET)"
+	go vet ./...
+	@echo "$(GREEN)✔ Vet complete$(RESET)"
+
+# ----------------------------------------
+# Security
+# ----------------------------------------
+
+security:
+	@echo "$(CYAN)🔒 Running security scan...$(RESET)"
+	@if command -v gosec >/dev/null 2>&1; then \
+		gosec -exclude-generated -severity medium ./...; \
+	else \
+		echo "$(YELLOW)⚠ gosec not installed. Install: go install github.com/securego/gosec/v2/cmd/gosec@latest$(RESET)"; \
+	fi
+	@echo "$(GREEN)✔ Security scan complete$(RESET)"
+
+vuln:
+	@echo "$(CYAN)🔒 Checking for vulnerabilities...$(RESET)"
+	@if command -v govulncheck >/dev/null 2>&1; then \
+		govulncheck ./...; \
+	else \
+		echo "$(YELLOW)⚠ govulncheck not installed. Install: go install golang.org/x/vuln/cmd/govulncheck@latest$(RESET)"; \
+	fi
+	@echo "$(GREEN)✔ Vulnerability check complete$(RESET)"
+
+# ----------------------------------------
+# Testing with Coverage
+# ----------------------------------------
+
+coverage:
+	@echo "$(BLUE)📊 Running tests with coverage...$(RESET)"
+	go test -v -race -coverprofile=coverage.out -covermode=atomic ./...
+	go tool cover -func=coverage.out
+	@echo "$(GREEN)✔ Coverage report generated$(RESET)"
+
+coverage-html: coverage
+	@echo "$(BLUE)📊 Generating HTML coverage report...$(RESET)"
+	go tool cover -html=coverage.out -o coverage.html
+	@echo "$(GREEN)✔ Open coverage.html in browser$(RESET)"
 
 # ----------------------------------------
 # Dependencies
@@ -97,6 +148,29 @@ release:
 	@echo "$(GREEN)✔ Release artifacts ready in $(BIN_DIR)/$(RESET)"
 
 # ----------------------------------------
+# Full QA Pipeline
+# ----------------------------------------
+
+qa: fmt-check vet lint test
+	@echo "$(GREEN)✅ QA checks passed!$(RESET)"
+
+qa-full: fmt-check vet lint security vuln test coverage
+	@echo "$(GREEN)✅ Full QA pipeline passed!$(RESET)"
+
+# ----------------------------------------
+# Pre-commit Hook
+# ----------------------------------------
+
+pre-commit: fmt lint test
+	@echo "$(GREEN)✅ Pre-commit checks passed!$(RESET)"
+
+install-hooks:
+	@echo "$(CYAN)🔧 Installing git hooks...$(RESET)"
+	@echo '#!/bin/bash\nmake pre-commit' > .git/hooks/pre-commit
+	@chmod +x .git/hooks/pre-commit
+	@echo "$(GREEN)✔ Pre-commit hook installed$(RESET)"
+
+# ----------------------------------------
 # Help
 # ----------------------------------------
 
@@ -104,14 +178,35 @@ help:
 	@echo ""
 	@echo "$(YELLOW)Available Make targets:$(RESET)"
 	@echo ""
-	@echo "$(CYAN)  make build        $(RESET)- Build the server"
-	@echo "$(CYAN)  make run          $(RESET)- Build + run the server"
-	@echo "$(CYAN)  make clean        $(RESET)- Remove build artifacts"
-	@echo "$(CYAN)  make test         $(RESET)- Run unit tests"
-	@echo "$(CYAN)  make integration  $(RESET)- Run integration tests (Docker)"
-	@echo "$(CYAN)  make fmt          $(RESET)- Format Go code"
-	@echo "$(CYAN)  make lint         $(RESET)- Run linter"
-	@echo "$(CYAN)  make deps         $(RESET)- Download and tidy modules"
-	@echo "$(CYAN)  make docker       $(RESET)- Build Docker image"
-	@echo "$(CYAN)  make release      $(RESET)- Build multi-platform binaries"
+	@echo "$(CYAN)Build & Run:$(RESET)"
+	@echo "  make build        - Build the server"
+	@echo "  make run          - Build + run the server"
+	@echo "  make clean        - Remove build artifacts"
+	@echo "  make docker       - Build Docker image"
+	@echo "  make release      - Build multi-platform binaries"
+	@echo ""
+	@echo "$(CYAN)Testing:$(RESET)"
+	@echo "  make test         - Run unit tests"
+	@echo "  make integration  - Run integration tests (Docker)"
+	@echo "  make coverage     - Run tests with coverage report"
+	@echo "  make coverage-html- Generate HTML coverage report"
+	@echo ""
+	@echo "$(CYAN)Code Quality:$(RESET)"
+	@echo "  make fmt          - Format Go code"
+	@echo "  make fmt-check    - Check if code is formatted"
+	@echo "  make lint         - Run golangci-lint"
+	@echo "  make vet          - Run go vet"
+	@echo ""
+	@echo "$(CYAN)Security:$(RESET)"
+	@echo "  make security     - Run gosec security scanner"
+	@echo "  make vuln         - Check for vulnerabilities"
+	@echo ""
+	@echo "$(CYAN)QA Pipeline:$(RESET)"
+	@echo "  make qa           - Run quick QA (fmt, vet, lint, test)"
+	@echo "  make qa-full      - Run full QA pipeline"
+	@echo "  make pre-commit   - Run pre-commit checks"
+	@echo "  make install-hooks- Install git pre-commit hook"
+	@echo ""
+	@echo "$(CYAN)Dependencies:$(RESET)"
+	@echo "  make deps         - Download and tidy modules"
 	@echo ""
