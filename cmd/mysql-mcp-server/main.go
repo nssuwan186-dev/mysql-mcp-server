@@ -20,12 +20,13 @@ import (
 )
 
 const (
-	defaultMaxRows          = 200
-	defaultQueryTimeoutSecs = 30
-	defaultMaxOpenConns     = 10
-	defaultMaxIdleConns     = 5
-	defaultConnMaxLifetimeM = 30
-	defaultHTTPPort         = 9306
+	defaultMaxRows            = 200
+	defaultQueryTimeoutSecs   = 30
+	defaultMaxOpenConns       = 10
+	defaultMaxIdleConns       = 5
+	defaultConnMaxLifetimeM   = 30
+	defaultHTTPPort           = 9306
+	defaultHTTPRequestTimeout = 60 * time.Second
 )
 
 // Global DB handle shared by all tools (safe for concurrent use).
@@ -37,6 +38,11 @@ var (
 	jsonLogging  bool
 	auditLogger  *AuditLogger
 	connManager  *ConnectionManager
+)
+
+// Pre-compiled regex patterns (compiled once at startup for performance)
+var (
+	vectorDimensionsRegex = regexp.MustCompile(`vector\((\d+)\)`)
 )
 
 // ===== Multi-DSN Connection Manager =====
@@ -1205,7 +1211,7 @@ func toolRunQuery(
 	if database != "" {
 		var dbName string
 		dbName, err = quoteIdent(database)
-	if err != nil {
+		if err != nil {
 			return nil, QueryResult{}, fmt.Errorf("invalid database name: %w", err)
 		}
 		// Use a single connection to ensure USE affects the query
@@ -1697,16 +1703,16 @@ func toolVectorInfo(
 		}
 
 		// Extract dimensions from type like "vector(768)"
-		if matches := regexp.MustCompile(`vector\((\d+)\)`).FindStringSubmatch(colType); len(matches) > 1 {
+		if matches := vectorDimensionsRegex.FindStringSubmatch(colType); len(matches) > 1 {
 			info.Dimensions, _ = strconv.Atoi(matches[1])
 		}
 
 		// Check for vector index
-		indexQuery := fmt.Sprintf(`
+		const indexQuery = `
 			SELECT INDEX_NAME, INDEX_TYPE 
 			FROM information_schema.STATISTICS 
 			WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? AND COLUMN_NAME = ?
-		`)
+		`
 		var indexName, indexType sql.NullString
 		getDB().QueryRowContext(ctx, indexQuery, input.Database, tableName, colName).Scan(&indexName, &indexType)
 		info.IndexName = indexName.String
@@ -2388,13 +2394,20 @@ func writeError(w http.ResponseWriter, status int, message string) {
 	writeJSON(w, status, APIResponse{Success: false, Error: message})
 }
 
+// httpContext returns a context with timeout for HTTP handlers.
+// Uses the request's context as parent to properly handle client disconnects.
+func httpContext(r *http.Request) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(r.Context(), defaultHTTPRequestTimeout)
+}
+
 // httpListDatabases handles GET /api/databases
 func httpListDatabases(w http.ResponseWriter, r *http.Request) {
 	if r.Method == "OPTIONS" {
 		writeJSON(w, http.StatusOK, nil)
 		return
 	}
-	ctx := context.Background()
+	ctx, cancel := httpContext(r)
+	defer cancel()
 	_, out, err := toolListDatabases(ctx, nil, ListDatabasesInput{})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
@@ -2414,7 +2427,8 @@ func httpListTables(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "database parameter is required")
 		return
 	}
-	ctx := context.Background()
+	ctx, cancel := httpContext(r)
+	defer cancel()
 	_, out, err := toolListTables(ctx, nil, ListTablesInput{Database: database})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
@@ -2435,7 +2449,8 @@ func httpDescribeTable(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "database and table parameters are required")
 		return
 	}
-	ctx := context.Background()
+	ctx, cancel := httpContext(r)
+	defer cancel()
 	_, out, err := toolDescribeTable(ctx, nil, DescribeTableInput{Database: database, Table: table})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
@@ -2463,7 +2478,8 @@ func httpRunQuery(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "sql field is required")
 		return
 	}
-	ctx := context.Background()
+	ctx, cancel := httpContext(r)
+	defer cancel()
 	_, out, err := toolRunQuery(ctx, nil, input)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
@@ -2478,7 +2494,8 @@ func httpPing(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, nil)
 		return
 	}
-	ctx := context.Background()
+	ctx, cancel := httpContext(r)
+	defer cancel()
 	_, out, err := toolPing(ctx, nil, PingInput{})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
@@ -2493,7 +2510,8 @@ func httpServerInfo(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, nil)
 		return
 	}
-	ctx := context.Background()
+	ctx, cancel := httpContext(r)
+	defer cancel()
 	_, out, err := toolServerInfo(ctx, nil, ServerInfoInput{})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
@@ -2508,7 +2526,8 @@ func httpListConnections(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, nil)
 		return
 	}
-	ctx := context.Background()
+	ctx, cancel := httpContext(r)
+	defer cancel()
 	_, out, err := toolListConnections(ctx, nil, ListConnectionsInput{})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
@@ -2536,7 +2555,8 @@ func httpUseConnection(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "name field is required")
 		return
 	}
-	ctx := context.Background()
+	ctx, cancel := httpContext(r)
+	defer cancel()
 	_, out, err := toolUseConnection(ctx, nil, input)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
@@ -2557,7 +2577,8 @@ func httpListIndexes(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "database and table parameters are required")
 		return
 	}
-	ctx := context.Background()
+	ctx, cancel := httpContext(r)
+	defer cancel()
 	_, out, err := toolListIndexes(ctx, nil, ListIndexesInput{Database: database, Table: table})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
@@ -2578,7 +2599,8 @@ func httpShowCreateTable(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "database and table parameters are required")
 		return
 	}
-	ctx := context.Background()
+	ctx, cancel := httpContext(r)
+	defer cancel()
 	_, out, err := toolShowCreateTable(ctx, nil, ShowCreateTableInput{Database: database, Table: table})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
@@ -2606,7 +2628,8 @@ func httpExplainQuery(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "sql field is required")
 		return
 	}
-	ctx := context.Background()
+	ctx, cancel := httpContext(r)
+	defer cancel()
 	_, out, err := toolExplainQuery(ctx, nil, input)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
@@ -2626,7 +2649,8 @@ func httpListViews(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "database parameter is required")
 		return
 	}
-	ctx := context.Background()
+	ctx, cancel := httpContext(r)
+	defer cancel()
 	_, out, err := toolListViews(ctx, nil, ListViewsInput{Database: database})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
@@ -2646,7 +2670,8 @@ func httpListTriggers(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "database parameter is required")
 		return
 	}
-	ctx := context.Background()
+	ctx, cancel := httpContext(r)
+	defer cancel()
 	_, out, err := toolListTriggers(ctx, nil, ListTriggersInput{Database: database})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
@@ -2666,7 +2691,8 @@ func httpListProcedures(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "database parameter is required")
 		return
 	}
-	ctx := context.Background()
+	ctx, cancel := httpContext(r)
+	defer cancel()
 	_, out, err := toolListProcedures(ctx, nil, ListProceduresInput{Database: database})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
@@ -2686,7 +2712,8 @@ func httpListFunctions(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "database parameter is required")
 		return
 	}
-	ctx := context.Background()
+	ctx, cancel := httpContext(r)
+	defer cancel()
 	_, out, err := toolListFunctions(ctx, nil, ListFunctionsInput{Database: database})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
@@ -2702,7 +2729,8 @@ func httpDatabaseSize(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	database := r.URL.Query().Get("database")
-	ctx := context.Background()
+	ctx, cancel := httpContext(r)
+	defer cancel()
 	_, out, err := toolDatabaseSize(ctx, nil, DatabaseSizeInput{Database: database})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
@@ -2722,7 +2750,8 @@ func httpTableSize(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "database parameter is required")
 		return
 	}
-	ctx := context.Background()
+	ctx, cancel := httpContext(r)
+	defer cancel()
 	_, out, err := toolTableSize(ctx, nil, TableSizeInput{Database: database})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
@@ -2743,7 +2772,8 @@ func httpForeignKeys(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "database parameter is required")
 		return
 	}
-	ctx := context.Background()
+	ctx, cancel := httpContext(r)
+	defer cancel()
 	_, out, err := toolForeignKeys(ctx, nil, ForeignKeysInput{Database: database, Table: table})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
@@ -2759,7 +2789,8 @@ func httpListStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	pattern := r.URL.Query().Get("pattern")
-	ctx := context.Background()
+	ctx, cancel := httpContext(r)
+	defer cancel()
 	_, out, err := toolListStatus(ctx, nil, ListStatusInput{Pattern: pattern})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
@@ -2775,7 +2806,8 @@ func httpListVariables(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	pattern := r.URL.Query().Get("pattern")
-	ctx := context.Background()
+	ctx, cancel := httpContext(r)
+	defer cancel()
 	_, out, err := toolListVariables(ctx, nil, ListVariablesInput{Pattern: pattern})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
@@ -2799,7 +2831,8 @@ func httpVectorSearch(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid JSON body: "+err.Error())
 		return
 	}
-	ctx := context.Background()
+	ctx, cancel := httpContext(r)
+	defer cancel()
 	_, out, err := toolVectorSearch(ctx, nil, input)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
@@ -2819,7 +2852,8 @@ func httpVectorInfo(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "database parameter is required")
 		return
 	}
-	ctx := context.Background()
+	ctx, cancel := httpContext(r)
+	defer cancel()
 	_, out, err := toolVectorInfo(ctx, nil, VectorInfoInput{Database: database})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
