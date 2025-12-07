@@ -91,7 +91,7 @@ func NewAuditLogger(path string) (*AuditLogger, error) {
 }
 
 // Log writes an audit entry to the log file.
-func (a *AuditLogger) Log(entry AuditEntry) {
+func (a *AuditLogger) Log(entry *AuditEntry) {
 	if !a.enabled {
 		return
 	}
@@ -99,7 +99,7 @@ func (a *AuditLogger) Log(entry AuditEntry) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	data, _ := json.Marshal(entry)
-	a.file.WriteString(string(data) + "\n")
+	_, _ = a.file.WriteString(string(data) + "\n")
 }
 
 // Close closes the audit log file.

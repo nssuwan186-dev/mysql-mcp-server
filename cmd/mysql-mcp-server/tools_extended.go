@@ -847,7 +847,7 @@ func toolVectorInfo(
 			WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? AND COLUMN_NAME = ?
 		`
 		var indexName, indexType sql.NullString
-		getDB().QueryRowContext(ctx, indexQuery, input.Database, tableName, colName).Scan(&indexName, &indexType)
+		_ = getDB().QueryRowContext(ctx, indexQuery, input.Database, tableName, colName).Scan(&indexName, &indexType)
 		info.IndexName = indexName.String
 		info.IndexType = indexType.String
 

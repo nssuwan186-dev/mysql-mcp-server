@@ -182,7 +182,7 @@ func toolRunQuery(
 			"query": util.TruncateQuery(sqlText, 200),
 		})
 		if auditLogger != nil {
-			auditLogger.Log(AuditEntry{
+			auditLogger.Log(&AuditEntry{
 				Tool:    "run_query",
 				Query:   util.TruncateQuery(sqlText, 500),
 				Success: false,
@@ -231,7 +231,7 @@ func toolRunQuery(
 	if err != nil {
 		timer.LogError(err, sqlText)
 		if auditLogger != nil {
-			auditLogger.Log(AuditEntry{
+			auditLogger.Log(&AuditEntry{
 				Tool:       "run_query",
 				Database:   database,
 				Query:      util.TruncateQuery(sqlText, 500),
@@ -282,7 +282,7 @@ func toolRunQuery(
 	// Log success
 	timer.LogSuccess(len(result.Rows), sqlText)
 	if auditLogger != nil {
-		auditLogger.Log(AuditEntry{
+		auditLogger.Log(&AuditEntry{
 			Tool:       "run_query",
 			Database:   database,
 			Query:      util.TruncateQuery(sqlText, 500),

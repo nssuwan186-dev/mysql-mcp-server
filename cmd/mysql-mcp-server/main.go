@@ -95,6 +95,7 @@ func main() {
 	// Verify we have at least one valid connection
 	db = connManager.GetActiveDB()
 	if db == nil {
+		connManager.Close() // Clean up before exit
 		log.Fatalf("config error: no valid MySQL connections available")
 	}
 
