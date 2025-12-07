@@ -13,7 +13,9 @@ BUILD_TIME ?= $(shell date -u '+%Y-%m-%dT%H:%M:%SZ')
 GIT_COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
 
 # Build flags for version injection
-LDFLAGS = -ldflags "-X main.Version=$(VERSION) -X main.BuildTime=$(BUILD_TIME) -X main.GitCommit=$(GIT_COMMIT)"
+VERSION_FLAGS = -X main.Version=$(VERSION) -X main.BuildTime=$(BUILD_TIME) -X main.GitCommit=$(GIT_COMMIT)
+LDFLAGS = -ldflags "$(VERSION_FLAGS)"
+LDFLAGS_RELEASE = -ldflags "$(VERSION_FLAGS) -s -w"
 
 # Colors
 YELLOW=\033[1;33m
@@ -156,11 +158,11 @@ docker:
 
 release:
 	@echo "$(CYAN)📦 Creating production release binaries $(VERSION)...$(RESET)"
-	GOOS=linux GOARCH=amd64 go build $(LDFLAGS) -ldflags "-s -w" -o $(BIN).linux-amd64 $(PKG)
-	GOOS=linux GOARCH=arm64 go build $(LDFLAGS) -ldflags "-s -w" -o $(BIN).linux-arm64 $(PKG)
-	GOOS=darwin GOARCH=amd64 go build $(LDFLAGS) -ldflags "-s -w" -o $(BIN).darwin-amd64 $(PKG)
-	GOOS=darwin GOARCH=arm64 go build $(LDFLAGS) -ldflags "-s -w" -o $(BIN).darwin-arm64 $(PKG)
-	GOOS=windows GOARCH=amd64 go build $(LDFLAGS) -ldflags "-s -w" -o $(BIN).windows-amd64.exe $(PKG)
+	GOOS=linux GOARCH=amd64 go build $(LDFLAGS_RELEASE) -o $(BIN).linux-amd64 $(PKG)
+	GOOS=linux GOARCH=arm64 go build $(LDFLAGS_RELEASE) -o $(BIN).linux-arm64 $(PKG)
+	GOOS=darwin GOARCH=amd64 go build $(LDFLAGS_RELEASE) -o $(BIN).darwin-amd64 $(PKG)
+	GOOS=darwin GOARCH=arm64 go build $(LDFLAGS_RELEASE) -o $(BIN).darwin-arm64 $(PKG)
+	GOOS=windows GOARCH=amd64 go build $(LDFLAGS_RELEASE) -o $(BIN).windows-amd64.exe $(PKG)
 	@echo "$(GREEN)✔ Release artifacts ready in $(BIN_DIR)/$(RESET)"
 
 # ----------------------------------------
