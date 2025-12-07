@@ -406,8 +406,19 @@ func httpLogger(method, path string, status int, duration time.Duration) {
 func startHTTPServer(port int, vectorMode bool) {
 	mux := http.NewServeMux()
 
+	// Create rate limiter if enabled
+	var rateLimiter *api.RateLimiter
+	if cfg.RateLimitEnabled {
+		rateLimiter = api.NewRateLimiter(cfg.RateLimitRPS, cfg.RateLimitBurst)
+		logInfo("rate limiting enabled", map[string]interface{}{
+			"rps":   cfg.RateLimitRPS,
+			"burst": cfg.RateLimitBurst,
+		})
+	}
+
 	// Create logging middleware
 	withLog := api.WithLogging(httpLogger)
+	withRateLimit := api.WithRateLimit(rateLimiter)
 
 	// Health and index
 	mux.HandleFunc("/health", api.WithCORS(httpHealth))
@@ -450,10 +461,15 @@ func startHTTPServer(port int, vectorMode bool) {
 
 	addr := fmt.Sprintf(":%d", port)
 
-	// Create server with timeouts and logging
+	// Build handler chain: rate limit -> logging -> mux
+	var handler http.HandlerFunc = mux.ServeHTTP
+	handler = withLog(handler)
+	handler = withRateLimit(handler)
+
+	// Create server with timeouts
 	server := &http.Server{
 		Addr:         addr,
-		Handler:      withLog(mux.ServeHTTP),
+		Handler:      handler,
 		ReadTimeout:  30 * time.Second,
 		WriteTimeout: cfg.HTTPRequestTimeout + 5*time.Second, // Slightly longer than request timeout
 		IdleTimeout:  120 * time.Second,
@@ -495,5 +511,10 @@ func startHTTPServer(port int, vectorMode bool) {
 		log.Printf("Server shutdown error: %v", err)
 	} else {
 		logInfo("Server stopped gracefully", nil)
+	}
+
+	// Stop rate limiter cleanup goroutine
+	if rateLimiter != nil {
+		rateLimiter.Stop()
 	}
 }

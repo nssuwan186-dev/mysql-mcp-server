@@ -19,6 +19,8 @@ const (
 	DefaultConnMaxLifetimeMins = 30
 	DefaultHTTPPort            = 9306
 	DefaultHTTPRequestTimeoutS = 60
+	DefaultRateLimitRPS        = 100 // requests per second
+	DefaultRateLimitBurst      = 200 // burst size
 )
 
 // ConnectionConfig represents a single MySQL connection configuration.
@@ -53,6 +55,11 @@ type Config struct {
 	HTTPPort           int
 	HTTPRequestTimeout time.Duration
 
+	// Rate limiting (HTTP mode only)
+	RateLimitEnabled bool
+	RateLimitRPS     float64 // requests per second
+	RateLimitBurst   int     // burst size
+
 	// Audit logging
 	AuditLogPath string
 }
@@ -71,6 +78,9 @@ func Load() (*Config, error) {
 		JSONLogging:        getEnvBool("MYSQL_MCP_JSON_LOGS"),
 		HTTPPort:           getEnvInt("MYSQL_HTTP_PORT", DefaultHTTPPort),
 		HTTPRequestTimeout: time.Duration(getEnvInt("MYSQL_HTTP_REQUEST_TIMEOUT_SECONDS", DefaultHTTPRequestTimeoutS)) * time.Second,
+		RateLimitEnabled:   getEnvBool("MYSQL_HTTP_RATE_LIMIT"),
+		RateLimitRPS:       float64(getEnvInt("MYSQL_HTTP_RATE_LIMIT_RPS", DefaultRateLimitRPS)),
+		RateLimitBurst:     getEnvInt("MYSQL_HTTP_RATE_LIMIT_BURST", DefaultRateLimitBurst),
 		AuditLogPath:       strings.TrimSpace(os.Getenv("MYSQL_MCP_AUDIT_LOG")),
 	}
 
