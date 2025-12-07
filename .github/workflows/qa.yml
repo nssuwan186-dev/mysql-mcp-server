@@ -9,7 +9,7 @@ on:
   workflow_dispatch:
 
 env:
-  GO_VERSION: 'stable'
+  GO_VERSION: '1.24'
 
 jobs:
   # ============================================
