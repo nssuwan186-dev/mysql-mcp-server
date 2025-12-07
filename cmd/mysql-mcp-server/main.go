@@ -5,86 +5,60 @@ import (
 	"context"
 	"database/sql"
 	"log"
-	"os"
-	"strings"
 	"time"
 
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/askdba/mysql-mcp-server/internal/config"
 	"github.com/askdba/mysql-mcp-server/internal/util"
 )
 
-// ===== Constants =====
-
-const (
-	defaultMaxRows            = 200
-	defaultQueryTimeoutSecs   = 30
-	defaultMaxOpenConns       = 10
-	defaultMaxIdleConns       = 5
-	defaultConnMaxLifetimeM   = 30
-	defaultHTTPPort           = 9306
-	defaultHTTPRequestTimeout = 60 * time.Second
+// Version information (injected at build time via ldflags).
+var (
+	Version   = "dev"
+	BuildTime = "unknown"
+	GitCommit = "unknown"
 )
 
 // ===== Global State =====
 
-// Global DB handle shared by all tools (safe for concurrent use).
+// Global configuration and state shared by all tools.
 var (
-	db           *sql.DB
+	cfg         *config.Config
+	connManager *ConnectionManager
+	auditLogger *AuditLogger
+
+	// Convenience aliases from config (for tool access)
 	maxRows      int
 	queryTimeout time.Duration
 	extendedMode bool
 	jsonLogging  bool
-	auditLogger  *AuditLogger
-	connManager  *ConnectionManager
+
+	// Deprecated: Use connManager.GetActiveDB() instead.
+	// Kept for backward compatibility during transition.
+	db *sql.DB
 )
-
-// ===== Utility Functions =====
-
-func getEnvInt(key string, def int) int {
-	val := strings.TrimSpace(os.Getenv(key))
-	if val == "" {
-		return def
-	}
-	var n int
-	for _, c := range val {
-		if c < '0' || c > '9' {
-			return def
-		}
-		n = n*10 + int(c-'0')
-	}
-	if n <= 0 {
-		return def
-	}
-	return n
-}
 
 // ===== Main Entry Point =====
 
 func main() {
-	// ---- Load config from env ----
-	maxRows = getEnvInt("MYSQL_MAX_ROWS", defaultMaxRows)
-	qTimeoutSecs := getEnvInt("MYSQL_QUERY_TIMEOUT_SECONDS", defaultQueryTimeoutSecs)
-	queryTimeout = time.Duration(qTimeoutSecs) * time.Second
-
-	// Check for extended mode
-	extendedMode = os.Getenv("MYSQL_MCP_EXTENDED") == "1"
-
-	// Check for JSON logging
-	jsonLogging = os.Getenv("MYSQL_MCP_JSON_LOGS") == "1"
-
-	// Check for vector tools (MySQL 9.0+)
-	vectorMode := os.Getenv("MYSQL_MCP_VECTOR") == "1"
-
-	// Check for HTTP REST API mode
-	httpMode := os.Getenv("MYSQL_MCP_HTTP") == "1"
-	httpPort := getEnvInt("MYSQL_HTTP_PORT", defaultHTTPPort)
-
-	// Initialize audit logger if path is specified
-	auditLogPath := strings.TrimSpace(os.Getenv("MYSQL_MCP_AUDIT_LOG"))
 	var err error
-	auditLogger, err = NewAuditLogger(auditLogPath)
+
+	// ---- Load configuration ----
+	cfg, err = config.Load()
+	if err != nil {
+		log.Fatalf("config error: %v", err)
+	}
+
+	// Set convenience aliases
+	maxRows = cfg.MaxRows
+	queryTimeout = cfg.QueryTimeout
+	extendedMode = cfg.ExtendedMode
+	jsonLogging = cfg.JSONLogging
+
+	// Initialize audit logger
+	auditLogger, err = NewAuditLogger(cfg.AuditLogPath)
 	if err != nil {
 		log.Fatalf("audit log init error: %v", err)
 	}
@@ -96,29 +70,19 @@ func main() {
 	connManager = NewConnectionManager()
 	defer connManager.Close()
 
-	// Load connections from environment
-	connConfigs, err := loadConnectionsFromEnv()
-	if err != nil {
-		log.Fatalf("config error: %v", err)
-	}
-
-	if len(connConfigs) == 0 {
-		log.Fatalf("config error: no MySQL connections configured. Set MYSQL_DSN or MYSQL_CONNECTIONS")
-	}
-
-	// Add all connections to the manager
-	for _, cfg := range connConfigs {
-		if err := connManager.AddConnection(cfg); err != nil {
-			log.Printf("Warning: failed to add connection '%s': %v", cfg.Name, err)
+	// Add all connections from config
+	for _, connCfg := range cfg.Connections {
+		if err := connManager.AddConnectionWithPoolConfig(connCfg, cfg); err != nil {
+			log.Printf("Warning: failed to add connection '%s': %v", connCfg.Name, err)
 		} else {
 			logInfo("connection added", map[string]interface{}{
-				"name": cfg.Name,
-				"dsn":  util.MaskDSN(cfg.DSN),
+				"name": connCfg.Name,
+				"dsn":  util.MaskDSN(connCfg.DSN),
 			})
 		}
 	}
 
-	// Set the global db to the active connection
+	// Verify we have at least one valid connection
 	db = connManager.GetActiveDB()
 	if db == nil {
 		log.Fatalf("config error: no valid MySQL connections available")
@@ -128,21 +92,23 @@ func main() {
 
 	// Log startup configuration
 	logInfo("mysql-mcp-server started", map[string]interface{}{
+		"version":          Version,
+		"buildTime":        BuildTime,
 		"maxRows":          maxRows,
 		"queryTimeout":     queryTimeout.String(),
 		"extendedMode":     extendedMode,
-		"vectorMode":       vectorMode,
-		"httpMode":         httpMode,
-		"httpPort":         httpPort,
+		"vectorMode":       cfg.VectorMode,
+		"httpMode":         cfg.HTTPMode,
+		"httpPort":         cfg.HTTPPort,
 		"jsonLogging":      jsonLogging,
 		"auditLogEnabled":  auditLogger.enabled,
-		"connections":      len(connConfigs),
+		"connections":      len(cfg.Connections),
 		"activeConnection": activeName,
 	})
 
 	// If HTTP mode is enabled, start REST API server instead of MCP
-	if httpMode {
-		startHTTPServer(httpPort, vectorMode)
+	if cfg.HTTPMode {
+		startHTTPServer(cfg.HTTPPort, cfg.VectorMode)
 		return
 	}
 
@@ -150,7 +116,7 @@ func main() {
 	server := mcp.NewServer(
 		&mcp.Implementation{
 			Name:    "mysql-mcp-server",
-			Version: "1.1.0",
+			Version: Version,
 		},
 		nil,
 	)
@@ -162,7 +128,7 @@ func main() {
 	registerConnectionTools(server)
 
 	// Register vector tools (MYSQL_MCP_VECTOR=1)
-	if vectorMode {
+	if cfg.VectorMode {
 		registerVectorTools(server)
 	}
 

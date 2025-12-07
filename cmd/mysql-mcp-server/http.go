@@ -8,6 +8,9 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"os/signal"
+	"syscall"
+	"time"
 
 	"github.com/askdba/mysql-mcp-server/internal/api"
 )
@@ -15,7 +18,7 @@ import (
 // httpContext returns a context with timeout for HTTP handlers.
 // Uses the request's context as parent to properly handle client disconnects.
 func httpContext(r *http.Request) (context.Context, context.CancelFunc) {
-	return context.WithTimeout(r.Context(), defaultHTTPRequestTimeout)
+	return context.WithTimeout(r.Context(), cfg.HTTPRequestTimeout)
 }
 
 // ===== Core HTTP Handlers =====
@@ -389,7 +392,7 @@ func httpAPIIndex(w http.ResponseWriter, r *http.Request) {
 
 // ===== HTTP Server Setup =====
 
-// startHTTPServer starts the REST API server.
+// startHTTPServer starts the REST API server with graceful shutdown support.
 func startHTTPServer(port int, vectorMode bool) {
 	mux := http.NewServeMux()
 
@@ -433,18 +436,51 @@ func startHTTPServer(port int, vectorMode bool) {
 	mux.HandleFunc("/api/vector/info", api.Chain(httpVectorInfo, api.WithCORS, vectorFeature, api.RequireQueryParam("database")))
 
 	addr := fmt.Sprintf(":%d", port)
-	logInfo("HTTP REST API server starting", map[string]interface{}{
-		"port":         port,
-		"address":      "http://localhost" + addr,
-		"extendedMode": extendedMode,
-		"vectorMode":   vectorMode,
-	})
 
-	log.Printf("REST API endpoints available at http://localhost:%d/api", port)
-	log.Printf("Health check at http://localhost:%d/health", port)
+	// Create server with timeouts
+	server := &http.Server{
+		Addr:         addr,
+		Handler:      mux,
+		ReadTimeout:  30 * time.Second,
+		WriteTimeout: cfg.HTTPRequestTimeout + 5*time.Second, // Slightly longer than request timeout
+		IdleTimeout:  120 * time.Second,
+	}
 
-	if err := http.ListenAndServe(addr, mux); err != nil {
-		log.Fatalf("HTTP server error: %v", err)
+	// Channel to listen for shutdown signals
+	stop := make(chan os.Signal, 1)
+	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
+
+	// Start server in goroutine
+	go func() {
+		logInfo("HTTP REST API server starting", map[string]interface{}{
+			"port":         port,
+			"address":      "http://localhost" + addr,
+			"extendedMode": extendedMode,
+			"vectorMode":   vectorMode,
+			"version":      Version,
+		})
+
+		log.Printf("REST API endpoints available at http://localhost:%d/api", port)
+		log.Printf("Health check at http://localhost:%d/health", port)
+		log.Printf("Press Ctrl+C to stop the server")
+
+		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Fatalf("HTTP server error: %v", err)
+		}
+	}()
+
+	// Wait for shutdown signal
+	<-stop
+	logInfo("Shutdown signal received, stopping server...", nil)
+
+	// Create context with timeout for graceful shutdown
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	// Attempt graceful shutdown
+	if err := server.Shutdown(ctx); err != nil {
+		log.Printf("Server shutdown error: %v", err)
+	} else {
+		logInfo("Server stopped gracefully", nil)
 	}
 }
-
