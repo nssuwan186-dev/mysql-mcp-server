@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/askdba/mysql-mcp-server/internal/util"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -300,7 +301,7 @@ func toolPing(
 	input PingInput,
 ) (*mcp.CallToolResult, PingOutput, error) {
 
-	ctx, cancel := context.WithTimeout(ctx, 5*queryTimeout/queryTimeout) // 5 seconds
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
 	start := NewQueryTimer("ping")
