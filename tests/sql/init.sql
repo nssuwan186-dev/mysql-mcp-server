@@ -95,7 +95,6 @@ BEGIN
 END //
 DELIMITER ;
 
--- Grant permissions to test user
-GRANT SELECT ON testdb.* TO 'testuser'@'%';
-FLUSH PRIVILEGES;
+-- Note: testuser is created by Docker Compose via MYSQL_USER env var
+-- In CI, we use root directly, so no additional grants needed
 
