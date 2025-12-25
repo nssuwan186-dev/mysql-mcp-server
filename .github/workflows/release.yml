@@ -126,10 +126,10 @@ jobs:
         run: |
           VERSION=${{ steps.version.outputs.version }}
           # VERSION has been validated to only contain safe characters (alphanumeric, dots, hyphens)
-          # Update version badge
-          sed -i "s/version-[0-9.]*-blue/version-${VERSION}-blue/g" README.md
-          # Update version example (match pattern like "mysql-mcp-server vX.Y.Z")
-          sed -i "s/mysql-mcp-server v[0-9.]*/mysql-mcp-server v${VERSION}/g" README.md
+          # Update version badge - pattern must match pre-release versions like 1.2.3-beta.1
+          sed -i "s/version-[0-9a-zA-Z.-]*-blue/version-${VERSION}-blue/g" README.md
+          # Update version example (match pattern like "mysql-mcp-server vX.Y.Z" or "mysql-mcp-server vX.Y.Z-beta.1")
+          sed -i "s/mysql-mcp-server v[0-9a-zA-Z.-]*/mysql-mcp-server v${VERSION}/g" README.md
           echo "Updated README.md with version $VERSION"
           git diff README.md || echo "No changes to README.md"
 
