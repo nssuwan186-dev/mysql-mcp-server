@@ -10,13 +10,50 @@ permissions:
   packages: write
 
 jobs:
-  goreleaser:
+  # Update README with new version before release
+  update-readme:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
+          ref: main
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract version
+        id: version
+        run: |
+          VERSION=${GITHUB_REF_NAME#v}
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Extracted version: $VERSION"
+
+      - name: Update README version badge
+        run: |
+          VERSION=${{ steps.version.outputs.version }}
+          # Update version badge
+          sed -i "s/version-[0-9.]*-blue/version-${VERSION}-blue/g" README.md
+          # Update version example (match pattern like "mysql-mcp-server vX.Y.Z")
+          sed -i "s/mysql-mcp-server v[0-9.]*/mysql-mcp-server v${VERSION}/g" README.md
+          echo "Updated README.md with version $VERSION"
+          git diff README.md || echo "No changes to README.md"
+
+      - name: Commit and push changes
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add README.md
+          git diff --staged --quiet || git commit -m "docs: bump version to ${{ steps.version.outputs.version }} [skip ci]"
+          git push origin main || echo "Nothing to push"
+
+  goreleaser:
+    runs-on: ubuntu-latest
+    needs: update-readme
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
           fetch-depth: 0
+          ref: main  # Get latest main with updated README
 
       - name: Set up Go
         uses: actions/setup-go@v5
