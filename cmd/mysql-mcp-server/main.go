@@ -38,27 +38,97 @@ var (
 	jsonLogging  bool
 )
 
+// ===== Argument Parsing =====
+
+// parsedArgs holds the result of command-line argument parsing.
+type parsedArgs struct {
+	action       string // "", "version", "help", "print-config", "validate-config"
+	configPath   string // path from --config or --config=
+	validatePath string // path for --validate-config
+	err          error  // parsing error (e.g., unknown flag)
+}
+
+// parseArgs parses command-line arguments and returns the result.
+// This is separated from main() for testability.
+func parseArgs(args []string) parsedArgs {
+	var result parsedArgs
+
+	for len(args) > 0 {
+		arg := args[0]
+		args = args[1:]
+
+		switch arg {
+		case "--version", "-v":
+			result.action = "version"
+			return result
+		case "--help", "-h", "help":
+			result.action = "help"
+			return result
+		case "--config", "-c":
+			if len(args) < 1 {
+				result.err = fmt.Errorf("--config requires a path argument")
+				return result
+			}
+			result.configPath = args[0]
+			args = args[1:]
+		case "--print-config":
+			result.action = "print-config"
+		case "--validate-config":
+			if len(args) < 1 {
+				result.err = fmt.Errorf("--validate-config requires a path argument")
+				return result
+			}
+			result.action = "validate-config"
+			result.validatePath = args[0]
+			args = args[1:]
+		default:
+			// Check if it's --config=path format
+			if len(arg) > 9 && arg[:9] == "--config=" {
+				result.configPath = arg[9:]
+			} else {
+				result.err = fmt.Errorf("unknown flag '%s'", arg)
+				return result
+			}
+		}
+	}
+
+	return result
+}
+
 // ===== Main Entry Point =====
 
 func main() {
-	// Handle command-line flags before loading configuration
-	if len(os.Args) > 1 {
-		arg := os.Args[1]
-		switch arg {
-		case "--version", "-v":
-			fmt.Printf("mysql-mcp-server %s\n", Version)
-			fmt.Printf("  Build time: %s\n", BuildTime)
-			fmt.Printf("  Git commit: %s\n", GitCommit)
-			os.Exit(0)
-		case "--help", "-h", "help":
-			printHelp()
-			os.Exit(0)
-		default:
-			// Unknown flag
-			fmt.Fprintf(os.Stderr, "Error: unknown flag '%s'\n\n", arg)
-			printHelp()
-			os.Exit(1)
-		}
+	// Parse command-line arguments
+	parsed := parseArgs(os.Args[1:])
+
+	// Handle parsing errors
+	if parsed.err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n\n", parsed.err)
+		printHelp()
+		os.Exit(1)
+	}
+
+	// Set config path if specified
+	if parsed.configPath != "" {
+		config.ConfigFilePath = parsed.configPath
+	}
+
+	// Handle immediate actions
+	switch parsed.action {
+	case "version":
+		fmt.Printf("mysql-mcp-server %s\n", Version)
+		fmt.Printf("  Build time: %s\n", BuildTime)
+		fmt.Printf("  Git commit: %s\n", GitCommit)
+		os.Exit(0)
+	case "help":
+		printHelp()
+		os.Exit(0)
+	case "print-config":
+		handlePrintConfig()
+		os.Exit(0)
+	case "validate-config":
+		handleValidateConfig(parsed.validatePath)
+		os.Exit(0)
 	}
 
 	var err error
@@ -291,6 +361,25 @@ func registerExtendedTools(server *mcp.Server) {
 	}, toolListVariables)
 }
 
+// ===== Config File Commands =====
+
+func handlePrintConfig() {
+	cfg, err := config.Load()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error loading config: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Print(config.PrintConfig(cfg))
+}
+
+func handleValidateConfig(path string) {
+	if err := config.ValidateConfigFile(path); err != nil {
+		fmt.Fprintf(os.Stderr, "Config validation failed: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Printf("Config file %s is valid\n", path)
+}
+
 // ===== Help and Usage =====
 
 func printHelp() {
@@ -300,17 +389,27 @@ USAGE:
     mysql-mcp-server [OPTIONS]
 
 OPTIONS:
-    -h, --help      Show this help message
-    -v, --version   Show version information
+    -h, --help                  Show this help message
+    -v, --version               Show version information
+    -c, --config PATH           Use config file at PATH
+    --print-config              Print current configuration as YAML
+    --validate-config PATH      Validate config file at PATH
 
 DESCRIPTION:
     A fast, read-only MySQL Server for the Model Context Protocol (MCP).
     Exposes safe MySQL introspection tools to Claude Desktop via MCP.
 
 CONFIGURATION:
-    All configuration is done via environment variables.
+    Configuration can be provided via config file or environment variables.
+    Environment variables take precedence over config file values.
 
-    Required:
+    Config file search order:
+        1. --config flag or MYSQL_MCP_CONFIG env var
+        2. ./mysql-mcp-server.yaml (current directory)
+        3. ~/.config/mysql-mcp-server/config.yaml (user config)
+        4. /etc/mysql-mcp-server/config.yaml (system config)
+
+    Required (via env var or config file):
         MYSQL_DSN                    MySQL DSN (e.g., user:pass@tcp(localhost:3306)/db)
 
     Optional:
@@ -347,6 +446,15 @@ EXAMPLES:
     # Basic usage with single connection
     export MYSQL_DSN="root:password@tcp(127.0.0.1:3306)/mysql?parseTime=true"
     mysql-mcp-server
+
+    # With config file
+    mysql-mcp-server --config /path/to/config.yaml
+
+    # Validate a config file
+    mysql-mcp-server --validate-config /path/to/config.yaml
+
+    # Print current configuration
+    mysql-mcp-server --print-config
 
     # With extended tools enabled
     export MYSQL_DSN="user:pass@tcp(localhost:3306)/mydb"
