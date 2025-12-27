@@ -163,6 +163,8 @@ func LoadConfigFile(path string) (*FileConfig, error) {
 		}
 	default:
 		// Try YAML first, then JSON
+		// Use separate variables to prevent state contamination if YAML
+		// partially populates the struct before failing
 		var yamlCfg FileConfig
 		if err := yaml.Unmarshal(data, &yamlCfg); err != nil {
 			var jsonCfg FileConfig
