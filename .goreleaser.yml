@@ -81,7 +81,7 @@ brews:
       owner: askdba
       name: homebrew-tap
       token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
-    folder: Formula
+    directory: Formula
     homepage: "https://github.com/askdba/mysql-mcp-server"
     description: "MySQL MCP Server - Model Context Protocol server for MySQL databases"
     license: "Apache-2.0"
