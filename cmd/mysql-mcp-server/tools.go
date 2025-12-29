@@ -184,6 +184,14 @@ func toolRunQuery(
 		return nil, QueryResult{}, fmt.Errorf("sql is required")
 	}
 
+	// Token estimation (optional)
+	inputTokens, _ := estimateTokensForValue(input)
+	tokens := &TokenUsage{
+		InputEstimated: inputTokens,
+		TotalEstimated: inputTokens, // Default to input; updated on success with output
+		Model:          tokenModel,
+	}
+
 	// Enhanced SQL validation using parser + regex defense-in-depth
 	if err := util.ValidateSQLCombined(sqlText); err != nil {
 		logWarn("query rejected by validator", map[string]interface{}{
@@ -192,10 +200,11 @@ func toolRunQuery(
 		})
 		if auditLogger != nil {
 			auditLogger.Log(&AuditEntry{
-				Tool:    "run_query",
-				Query:   util.TruncateQuery(sqlText, 500),
-				Success: false,
-				Error:   err.Error(),
+				Tool:        "run_query",
+				Query:       util.TruncateQuery(sqlText, 500),
+				InputTokens: inputTokens,
+				Success:     false,
+				Error:       err.Error(),
 			})
 		}
 		return nil, QueryResult{}, fmt.Errorf("query validation failed: %w", err)
@@ -238,15 +247,16 @@ func toolRunQuery(
 	}
 
 	if err != nil {
-		timer.LogError(err, sqlText)
+		timer.LogError(err, sqlText, tokens)
 		if auditLogger != nil {
 			auditLogger.Log(&AuditEntry{
-				Tool:       "run_query",
-				Database:   database,
-				Query:      util.TruncateQuery(sqlText, 500),
-				DurationMs: timer.ElapsedMs(),
-				Success:    false,
-				Error:      err.Error(),
+				Tool:        "run_query",
+				Database:    database,
+				Query:       util.TruncateQuery(sqlText, 500),
+				DurationMs:  timer.ElapsedMs(),
+				InputTokens: inputTokens,
+				Success:     false,
+				Error:       err.Error(),
 			})
 		}
 		return nil, QueryResult{}, fmt.Errorf("query failed: %w", err)
@@ -288,16 +298,23 @@ func toolRunQuery(
 		return nil, QueryResult{}, err
 	}
 
+	// Token estimation for output (optional)
+	outputTokens, _ := estimateTokensForValue(result)
+	tokens.OutputEstimated = outputTokens
+	tokens.TotalEstimated = inputTokens + outputTokens
+
 	// Log success
-	timer.LogSuccess(len(result.Rows), sqlText)
+	timer.LogSuccess(len(result.Rows), sqlText, tokens)
 	if auditLogger != nil {
 		auditLogger.Log(&AuditEntry{
-			Tool:       "run_query",
-			Database:   database,
-			Query:      util.TruncateQuery(sqlText, 500),
-			DurationMs: timer.ElapsedMs(),
-			RowCount:   len(result.Rows),
-			Success:    true,
+			Tool:         "run_query",
+			Database:     database,
+			Query:        util.TruncateQuery(sqlText, 500),
+			DurationMs:   timer.ElapsedMs(),
+			RowCount:     len(result.Rows),
+			InputTokens:  inputTokens,
+			OutputTokens: outputTokens,
+			Success:      true,
 		})
 	}
 
