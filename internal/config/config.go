@@ -31,6 +31,7 @@ type ConnectionConfig struct {
 	DSN         string `json:"dsn"`
 	Description string `json:"description,omitempty"`
 	ReadOnly    bool   `json:"read_only,omitempty"`
+	SSL         string `json:"ssl,omitempty"` // "true", "false", "skip-verify", or empty (use DSN as-is)
 }
 
 // Config holds all configuration for the MySQL MCP server.
@@ -188,21 +189,32 @@ func applyEnvOverrides(cfg *Config) {
 func loadConnections() ([]ConnectionConfig, error) {
 	var configs []ConnectionConfig
 
+	// Global SSL setting from MYSQL_SSL (applies to all connections without explicit SSL)
+	globalSSL := os.Getenv("MYSQL_SSL")
+
 	// Check for JSON-based configuration first
 	if jsonConfig := os.Getenv("MYSQL_CONNECTIONS"); jsonConfig != "" {
 		if err := json.Unmarshal([]byte(jsonConfig), &configs); err != nil {
 			return nil, fmt.Errorf("failed to parse MYSQL_CONNECTIONS: %w", err)
+		}
+		// Apply global SSL to connections that don't have their own SSL setting
+		for i := range configs {
+			if configs[i].SSL == "" && globalSSL != "" {
+				configs[i].SSL = globalSSL
+			}
 		}
 		return configs, nil
 	}
 
 	// Fall back to numbered DSN environment variables
 	// MYSQL_DSN (default), MYSQL_DSN_1, MYSQL_DSN_2, etc.
+
 	if dsn := os.Getenv("MYSQL_DSN"); dsn != "" {
 		configs = append(configs, ConnectionConfig{
 			Name:        "default",
 			DSN:         dsn,
 			Description: "Default connection",
+			SSL:         globalSSL,
 		})
 	}
 
@@ -210,6 +222,7 @@ func loadConnections() ([]ConnectionConfig, error) {
 		dsnKey := fmt.Sprintf("MYSQL_DSN_%d", i)
 		nameKey := fmt.Sprintf("MYSQL_DSN_%d_NAME", i)
 		descKey := fmt.Sprintf("MYSQL_DSN_%d_DESC", i)
+		sslKey := fmt.Sprintf("MYSQL_DSN_%d_SSL", i)
 
 		dsn := os.Getenv(dsnKey)
 		if dsn == "" {
@@ -221,10 +234,17 @@ func loadConnections() ([]ConnectionConfig, error) {
 			name = fmt.Sprintf("connection_%d", i)
 		}
 
+		// Per-connection SSL overrides global
+		ssl := os.Getenv(sslKey)
+		if ssl == "" {
+			ssl = globalSSL
+		}
+
 		configs = append(configs, ConnectionConfig{
 			Name:        name,
 			DSN:         dsn,
 			Description: os.Getenv(descKey),
+			SSL:         ssl,
 		})
 	}
 
