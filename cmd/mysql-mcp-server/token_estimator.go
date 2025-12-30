@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"sync"
 
 	tiktoken "github.com/pkoukk/tiktoken-go"
@@ -50,6 +51,52 @@ type TokenUsage struct {
 	OutputEstimated int    `json:"output_estimated"`
 	TotalEstimated  int    `json:"total_estimated"`
 	Model           string `json:"model,omitempty"`
+}
+
+// TokenEfficiency holds calculated efficiency metrics for token usage.
+type TokenEfficiency struct {
+	TokensPerRow    float64 `json:"tokens_per_row,omitempty"`
+	IOEfficiency    float64 `json:"io_efficiency,omitempty"`
+	CostEstimateUSD float64 `json:"cost_estimate_usd,omitempty"`
+}
+
+// Pricing per 1M tokens (GPT-4o as reference, Dec 2024)
+const (
+	costPerMillionInputTokens  = 2.50  // $2.50 per 1M input tokens
+	costPerMillionOutputTokens = 10.00 // $10.00 per 1M output tokens
+)
+
+// CalculateEfficiency computes token efficiency metrics.
+// Returns nil if token tracking is disabled or no meaningful data.
+func CalculateEfficiency(inputTokens, outputTokens, rowCount int) *TokenEfficiency {
+	if !tokenTracking {
+		return nil
+	}
+
+	eff := &TokenEfficiency{}
+
+	// Tokens per row (only if we have rows)
+	if rowCount > 0 {
+		eff.TokensPerRow = float64(outputTokens) / float64(rowCount)
+		// Round to 2 decimal places using math.Round to avoid int overflow on 32-bit systems
+		eff.TokensPerRow = math.Round(eff.TokensPerRow*100) / 100
+	}
+
+	// IO Efficiency ratio (output/input, higher = more data per token spent)
+	if inputTokens > 0 {
+		eff.IOEfficiency = float64(outputTokens) / float64(inputTokens)
+		// Round to 2 decimal places using math.Round to avoid int overflow on 32-bit systems
+		eff.IOEfficiency = math.Round(eff.IOEfficiency*100) / 100
+	}
+
+	// Cost estimate in USD
+	inputCost := float64(inputTokens) / 1_000_000 * costPerMillionInputTokens
+	outputCost := float64(outputTokens) / 1_000_000 * costPerMillionOutputTokens
+	eff.CostEstimateUSD = inputCost + outputCost
+	// Round to 6 decimal places using math.Round to avoid int overflow on 32-bit systems
+	eff.CostEstimateUSD = math.Round(eff.CostEstimateUSD*1_000_000) / 1_000_000
+
+	return eff
 }
 
 const (
