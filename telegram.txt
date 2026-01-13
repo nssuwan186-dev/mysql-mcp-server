@@ -1,0 +1,1373 @@
+# 🤖 ระบบโรงแรมแบบ AI Agent + Telegram Bot
+
+## 💡 แนวคิดใหม่: Conversational Hotel Management
+
+คุณถูกทางแล้วครับ! นี่คือแนวคิดที่ทันสมัยมาก ใช้ **Telegram Bot + AI Agent** เป็น Interface หลักในการจัดการโรงแรม
+
+---
+
+## 🎯 วิสัยทัศน์ระบบ
+
+```
+┌─────────────────────────────────────────────────┐
+│                                                 │
+│  👤 ผู้จัดการ/พนักงาน                           │
+│        ↓                                        │
+│   💬 Telegram Chat                              │
+│        ↓                                        │
+│   🤖 AI Agent (Claude/GPT)                     │
+│        ↓                                        │
+│   ⚙️ Backend System (FastAPI + PostgreSQL)     │
+│        ↓                                        │
+│   📊 Dashboard (Optional Web Interface)        │
+│                                                 │
+└─────────────────────────────────────────────────┘
+```
+
+### การใช้งานจริง:
+
+```
+ผู้จัดการ: "มีห้องว่างไหม?"
+Bot: "ห้องว่าง 28 ห้อง จากทั้งหมด 45 ห้อง (อัตราการใช้ 38%)"
+
+ผู้จัดการ: "จองห้อง 2 เตียง สำหรับคุณสมชาย 3 คืน เริ่ม 10 ม.ค."
+Bot: "กำลังตรวจสอบ... ✓
+     ห้อง 201 (2 เตียง) ว่าง
+     ราคา ฿2,000 x 3 คืน = ฿6,000
+     ยืนยันการจองไหมครับ?"
+
+ผู้จัดการ: "ยืนยัน"
+Bot: "✅ สร้างการจอง RES045 สำเร็จ
+     ลูกค้า: คุณสมชาย
+     ห้อง: 201
+     วันที่: 10-13 ม.ค. 2026
+     ราคารวม: ฿6,000"
+
+ผู้จัดการ: "สรุปรายได้วันนี้"
+Bot: "💰 สรุปการเงินวันนี้ (7 ม.ค. 2026)
+     รายรับ: ฿25,500
+     รายจ่าย: ฿15,200
+     กำไร: ฿10,300 ✨"
+```
+
+---
+
+## 🏗️ สถาปัตยกรรมระบบ
+
+```
+┌────────────────────────────────────────────────────────┐
+│                  USER INTERFACE LAYER                   │
+│                                                         │
+│  ┌──────────────────────────────────────────────────┐  │
+│  │           Telegram Bot Interface                 │  │
+│  │  - สนทนาภาษาธรรมชาติ                             │  │
+│  │  - รองรับคำสั่งแบบ Natural Language              │  │
+│  │  - แสดงผลแบบ Rich Message (Buttons, Cards)      │  │
+│  │  - รองรับไฟล์ (รูปภาพ, PDF, Excel)               │  │
+│  └──────────────────────────────────────────────────┘  │
+└────────────────────────────────────────────────────────┘
+                           │
+                           ▼
+┌────────────────────────────────────────────────────────┐
+│                   AI AGENT LAYER                        │
+│                                                         │
+│  ┌──────────────────────────────────────────────────┐  │
+│  │         Claude/GPT-4 AI Agent                    │  │
+│  │  - เข้าใจภาษาธรรมชาติ (NLU)                      │  │
+│  │  - Intent Classification                         │  │
+│  │  - Entity Extraction                             │  │
+│  │  - Context Management                            │  │
+│  │  - Function Calling (Tools)                      │  │
+│  └──────────────────────────────────────────────────┘  │
+└────────────────────────────────────────────────────────┘
+                           │
+                           ▼
+┌────────────────────────────────────────────────────────┐
+│                 BUSINESS LOGIC LAYER                    │
+│                                                         │
+│  ┌──────────────────────────────────────────────────┐  │
+│  │            Tool Functions (Actions)              │  │
+│  │                                                  │  │
+│  │  • check_availability()    • create_booking()   │  │
+│  │  • get_dashboard()         • record_payment()   │  │
+│  │  • search_guest()          • generate_report()  │  │
+│  │  • calculate_revenue()     • manage_staff()     │  │
+│  │  • update_room_status()    • send_invoice()     │  │
+│  └──────────────────────────────────────────────────┘  │
+└────────────────────────────────────────────────────────┘
+                           │
+                           ▼
+┌────────────────────────────────────────────────────────┐
+│                    DATA LAYER                           │
+│                                                         │
+│  ┌──────────────────────────────────────────────────┐  │
+│  │         PostgreSQL Database                      │  │
+│  │  rooms | bookings | guests | transactions       │  │
+│  │  staff | payroll | rentals | config             │  │
+│  └──────────────────────────────────────────────────┘  │
+└────────────────────────────────────────────────────────┘
+```
+
+---
+
+## 🔧 Tech Stack แนะนำ
+
+```python
+# Backend
+Python 3.11+
+├── python-telegram-bot  # Telegram Bot Framework
+├── anthropic            # Claude AI API
+├── langchain            # AI Agent Framework (Optional)
+├── fastapi              # API Framework
+├── sqlalchemy           # ORM
+├── postgresql           # Database
+└── redis                # Session/Cache
+
+# Optional Web Dashboard
+React + shadcn/ui        # สำหรับดูรายงานแบบละเอียด
+```
+
+---
+
+## 💻 โค้ดตัวอย่างที่สมบูรณ์
+
+### 1. Project Structure
+
+```
+hotel-telegram-bot/
+│
+├── bot/
+│   ├── __init__.py
+│   ├── main.py                    # Telegram Bot Entry Point
+│   ├── handlers.py                # Message Handlers
+│   ├── keyboards.py               # Inline Keyboards
+│   └── utils.py
+│
+├── ai_agent/
+│   ├── __init__.py
+│   ├── agent.py                   # AI Agent (Claude)
+│   ├── tools.py                   # Tool Functions
+│   └── prompts.py                 # System Prompts
+│
+├── services/
+│   ├── __init__.py
+│   ├── booking_service.py
+│   ├── finance_service.py
+│   ├── guest_service.py
+│   ├── report_service.py
+│   └── room_service.py
+│
+├── models/
+│   ├── __init__.py
+│   ├── database.py
+│   └── [same as before...]
+│
+├── config.py
+├── requirements.txt
+└── .env
+```
+
+### 2. Main Bot Code
+
+```python
+# bot/main.py
+import os
+import logging
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import (
+    Application,
+    CommandHandler,
+    MessageHandler,
+    CallbackQueryHandler,
+    ContextTypes,
+    filters
+)
+from ai_agent.agent import HotelAIAgent
+from config import settings
+
+logging.basicConfig(
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    level=logging.INFO
+)
+logger = logging.getLogger(__name__)
+
+# Initialize AI Agent
+ai_agent = HotelAIAgent()
+
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """เริ่มต้นใช้งาน Bot"""
+    user = update.effective_user
+    
+    welcome_message = f"""
+👋 สวัสดีครับ คุณ {user.first_name}!
+
+ฉันคือ AI Assistant สำหรับจัดการโรงแรม
+คุณสามารถสั่งงานฉันด้วยภาษาธรรมชาติได้เลย
+
+🎯 ตัวอย่างคำสั่ง:
+• "มีห้องว่างไหม?"
+• "จองห้องให้คุณสมชาย"
+• "สรุปรายได้วันนี้"
+• "แสดง dashboard"
+• "บันทึกค่าใช้จ่าย"
+• "จ่ายเงินเดือนพนักงาน"
+
+หรือใช้เมนูด่วนด้านล่าง ⬇️
+    """
+    
+    keyboard = [
+        [
+            InlineKeyboardButton("📊 Dashboard", callback_data="dashboard"),
+            InlineKeyboardButton("🛏️ ห้องพัก", callback_data="rooms")
+        ],
+        [
+            InlineKeyboardButton("📝 การจอง", callback_data="bookings"),
+            InlineKeyboardButton("👥 ลูกค้า", callback_data="guests")
+        ],
+        [
+            InlineKeyboardButton("💰 การเงิน", callback_data="finance"),
+            InlineKeyboardButton("👔 พนักงาน", callback_data="staff")
+        ],
+        [
+            InlineKeyboardButton("📈 รายงาน", callback_data="reports"),
+            InlineKeyboardButton("⚙️ ตั้งค่า", callback_data="settings")
+        ]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await update.message.reply_text(welcome_message, reply_markup=reply_markup)
+
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """จัดการข้อความจากผู้ใช้"""
+    user_message = update.message.text
+    user_id = update.effective_user.id
+    
+    # แสดงว่ากำลังพิมพ์...
+    await update.message.chat.send_action("typing")
+    
+    try:
+        # ส่งข้อความไปยัง AI Agent
+        response = await ai_agent.process_message(
+            message=user_message,
+            user_id=user_id,
+            context=context.user_data
+        )
+        
+        # ตรวจสอบว่า response มี keyboard หรือไม่
+        if response.get('keyboard'):
+            reply_markup = InlineKeyboardMarkup(response['keyboard'])
+            await update.message.reply_text(
+                response['text'],
+                reply_markup=reply_markup,
+                parse_mode='HTML'
+            )
+        else:
+            await update.message.reply_text(
+                response['text'],
+                parse_mode='HTML'
+            )
+        
+        # ส่งไฟล์ถ้ามี (เช่น รายงาน PDF)
+        if response.get('file'):
+            await update.message.reply_document(
+                document=response['file'],
+                filename=response.get('filename', 'report.pdf')
+            )
+            
+    except Exception as e:
+        logger.error(f"Error processing message: {e}")
+        await update.message.reply_text(
+            "❌ เกิดข้อผิดพลาด กรุณาลองใหม่อีกครั้ง\n"
+            f"Error: {str(e)}"
+        )
+
+async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """จัดการ Callback จากปุ่ม Inline Keyboard"""
+    query = update.callback_query
+    await query.answer()
+    
+    action = query.data
+    user_id = update.effective_user.id
+    
+    # ส่ง action ไปยัง AI Agent
+    response = await ai_agent.handle_action(
+        action=action,
+        user_id=user_id,
+        context=context.user_data
+    )
+    
+    # แก้ไขข้อความเดิม
+    if response.get('keyboard'):
+        reply_markup = InlineKeyboardMarkup(response['keyboard'])
+        await query.edit_message_text(
+            text=response['text'],
+            reply_markup=reply_markup,
+            parse_mode='HTML'
+        )
+    else:
+        await query.edit_message_text(
+            text=response['text'],
+            parse_mode='HTML'
+        )
+
+async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """จัดการไฟล์ที่ส่งมา (Excel, PDF, etc.)"""
+    document = update.message.document
+    file = await document.get_file()
+    
+    # Download file
+    file_path = f"uploads/{document.file_name}"
+    await file.download_to_drive(file_path)
+    
+    await update.message.reply_text(
+        f"✅ ได้รับไฟล์ {document.file_name} แล้ว\n"
+        "กำลังประมวลผล..."
+    )
+    
+    # ประมวลผลไฟล์ด้วย AI Agent
+    response = await ai_agent.process_file(
+        file_path=file_path,
+        file_type=document.mime_type,
+        user_id=update.effective_user.id
+    )
+    
+    await update.message.reply_text(response['text'], parse_mode='HTML')
+
+def main():
+    """เริ่มต้น Bot"""
+    # สร้าง Application
+    application = Application.builder().token(settings.TELEGRAM_BOT_TOKEN).build()
+    
+    # เพิ่ม Handlers
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    application.add_handler(CallbackQueryHandler(handle_callback))
+    application.add_handler(MessageHandler(filters.Document.ALL, handle_document))
+    
+    # เริ่มต้น Bot
+    logger.info("🤖 Bot started!")
+    application.run_polling(allowed_updates=Update.ALL_TYPES)
+
+if __name__ == '__main__':
+    main()
+```
+
+### 3. AI Agent (Claude Integration)
+
+```python
+# ai_agent/agent.py
+import anthropic
+import json
+from typing import Dict, Any
+from config import settings
+from .tools import TOOLS, execute_tool
+
+class HotelAIAgent:
+    def __init__(self):
+        self.client = anthropic.Anthropic(api_key=settings.ANTHROPIC_API_KEY)
+        self.model = "claude-sonnet-4-20250514"
+        
+        # System Prompt
+        self.system_prompt = """
+คุณคือ AI Assistant สำหรับระบบจัดการโรงแรม
+คุณช่วยผู้จัดการและพนักงานในการ:
+- จัดการห้องพักและการจอง
+- บันทึกรายรับ-รายจ่าย
+- ค้นหาข้อมูลลูกค้า
+- สร้างรายงานการเงิน
+- จัดการพนักงานและเงินเดือน
+- ตอบคำถามเกี่ยวกับการดำเนินงาน
+
+ตอบด้วยภาษาไทยที่สุภาพและกระชับ
+ใช้ emoji เพื่อให้น่าสนใจ
+ถามชัดเจนเมื่อต้องการข้อมูลเพิ่มเติม
+"""
+        
+        # Conversation History (ใช้ Redis ใน Production)
+        self.conversations = {}
+    
+    async def process_message(
+        self, 
+        message: str, 
+        user_id: int,
+        context: Dict = None
+    ) -> Dict[str, Any]:
+        """ประมวลผลข้อความจากผู้ใช้"""
+        
+        # ดึง conversation history
+        if user_id not in self.conversations:
+            self.conversations[user_id] = []
+        
+        conversation = self.conversations[user_id]
+        conversation.append({
+            "role": "user",
+            "content": message
+        })
+        
+        try:
+            # เรียก Claude API
+            response = self.client.messages.create(
+                model=self.model,
+                max_tokens=4096,
+                system=self.system_prompt,
+                messages=conversation,
+                tools=TOOLS
+            )
+            
+            # ตรวจสอบว่า Claude ต้องการใช้ Tool หรือไม่
+            if response.stop_reason == "tool_use":
+                # Execute tools
+                tool_results = []
+                assistant_message = {"role": "assistant", "content": response.content}
+                conversation.append(assistant_message)
+                
+                for content_block in response.content:
+                    if content_block.type == "tool_use":
+                        tool_name = content_block.name
+                        tool_input = content_block.input
+                        
+                        print(f"🔧 Executing tool: {tool_name}")
+                        print(f"   Input: {tool_input}")
+                        
+                        # Execute tool
+                        tool_result = await execute_tool(tool_name, tool_input)
+                        
+                        tool_results.append({
+                            "type": "tool_result",
+                            "tool_use_id": content_block.id,
+                            "content": json.dumps(tool_result, ensure_ascii=False)
+                        })
+                
+                # ส่ง tool results กลับไป Claude
+                conversation.append({
+                    "role": "user",
+                    "content": tool_results
+                })
+                
+                # เรียก Claude อีกครั้งเพื่อให้ตอบ
+                final_response = self.client.messages.create(
+                    model=self.model,
+                    max_tokens=4096,
+                    system=self.system_prompt,
+                    messages=conversation,
+                    tools=TOOLS
+                )
+                
+                response_text = self._extract_text(final_response.content)
+                
+            else:
+                response_text = self._extract_text(response.content)
+            
+            # บันทึก assistant response
+            conversation.append({
+                "role": "assistant",
+                "content": response_text
+            })
+            
+            # จำกัดความยาว conversation (เก็บ 20 ข้อความล่าสุด)
+            if len(conversation) > 20:
+                conversation = conversation[-20:]
+            
+            self.conversations[user_id] = conversation
+            
+            return {
+                "text": response_text,
+                "keyboard": self._extract_keyboard(response_text)
+            }
+            
+        except Exception as e:
+            print(f"Error in AI Agent: {e}")
+            return {
+                "text": f"❌ เกิดข้อผิดพลาด: {str(e)}"
+            }
+    
+    async def handle_action(
+        self, 
+        action: str, 
+        user_id: int,
+        context: Dict = None
+    ) -> Dict[str, Any]:
+        """จัดการ Action จากปุ่ม"""
+        
+        action_messages = {
+            "dashboard": "แสดง dashboard",
+            "rooms": "แสดงสถานะห้องพัก",
+            "bookings": "แสดงรายการจอง",
+            "guests": "แสดงรายชื่อลูกค้า",
+            "finance": "สรุปการเงิน",
+            "staff": "แสดงข้อมูลพนักงาน",
+            "reports": "สร้างรายงาน",
+            "settings": "ตั้งค่าระบบ"
+        }
+        
+        message = action_messages.get(action, action)
+        return await self.process_message(message, user_id, context)
+    
+    def _extract_text(self, content) -> str:
+        """แยกข้อความจาก response"""
+        if isinstance(content, list):
+            text_blocks = [block.text for block in content if hasattr(block, 'text')]
+            return "\n".join(text_blocks)
+        return str(content)
+    
+    def _extract_keyboard(self, text: str):
+        """สร้าง inline keyboard จากข้อความ (ถ้ามี)"""
+        # Logic สำหรับสร้าง keyboard ตามบริบท
+        # เช่น ถ้าพูดถึงการจอง ให้แสดงปุ่ม "ยืนยัน" "ยกเลิก"
+        return None
+
+    async def process_file(
+        self,
+        file_path: str,
+        file_type: str,
+        user_id: int
+    ) -> Dict[str, Any]:
+        """ประมวลผลไฟล์ที่อัปโหลด"""
+        
+        if 'spreadsheet' in file_type or 'excel' in file_type:
+            # Import ข้อมูลจาก Excel
+            return {
+                "text": "📊 กำลังนำเข้าข้อมูลจากไฟล์ Excel..."
+            }
+        elif 'pdf' in file_type:
+            # อ่าน PDF
+            return {
+                "text": "📄 กำลังอ่านไฟล์ PDF..."
+            }
+        else:
+            return {
+                "text": "❌ รองรับเฉพาะไฟล์ Excel และ PDF"
+            }
+```
+
+### 4. Tool Functions
+
+```python
+# ai_agent/tools.py
+from datetime import date, datetime
+from services.room_service import RoomService
+from services.booking_service import BookingService
+from services.finance_service import FinanceService
+from services.report_service import ReportService
+from models.database import get_db
+
+# กำหนด Tools ที่ Claude สามารถใช้ได้
+TOOLS = [
+    {
+        "name": "get_dashboard",
+        "description": "ดึงข้อมูล dashboard ภาพรวมของโรงแรม รวมถึงจำนวนห้องว่าง การเงิน และข้อมูลสำคัญอื่นๆ",
+        "input_schema": {
+            "type": "object",
+            "properties": {},
+            "required": []
+        }
+    },
+    {
+        "name": "check_room_availability",
+        "description": "ตรวจสอบห้องว่าง สามารถระบุวันที่และประเภทห้องที่ต้องการ",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "check_in_date": {
+                    "type": "string",
+                    "description": "วันเช็คอิน รูปแบบ YYYY-MM-DD"
+                },
+                "check_out_date": {
+                    "type": "string",
+                    "description": "วันเช็คเอาท์ รูปแบบ YYYY-MM-DD"
+                },
+                "room_type": {
+                    "type": "string",
+                    "description": "ประเภทห้อง เช่น '1 เตียง', '2 เตียง'"
+                }
+            },
+            "required": []
+        }
+    },
+    {
+        "name": "create_booking",
+        "description": "สร้างการจองห้องใหม่",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "guest_name": {
+                    "type": "string",
+                    "description": "ชื่อผู้จอง"
+                },
+                "guest_phone": {
+                    "type": "string",
+                    "description": "เบอร์โทรศัพท์"
+                },
+                "room_number": {
+                    "type": "string",
+                    "description": "หมายเลขห้อง"
+                },
+                "check_in_date": {
+                    "type": "string",
+                    "description": "วันเช็คอิน YYYY-MM-DD"
+                },
+                "check_out_date": {
+                    "type": "string",
+                    "description": "วันเช็คเอาท์ YYYY-MM-DD"
+                },
+                "payment_method": {
+                    "type": "string",
+                    "description": "วิธีชำระเงิน"
+                },
+                "deposit": {
+                    "type": "number",
+                    "description": "เงินมัดจำ"
+                }
+            },
+            "required": ["guest_name", "guest_phone", "check_in_date", "check_out_date"]
+        }
+    },
+    {
+        "name": "get_financial_summary",
+        "description": "ดึงสรุปการเงิน รายรับ รายจ่าย และกำไร",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "period": {
+                    "type": "string",
+                    "description": "'today', 'week', 'month', 'year'",
+                    "enum": ["today", "week", "month", "year"]
+                },
+                "start_date": {
+                    "type": "string",
+                    "description": "วันที่เริ่มต้น YYYY-MM-DD (ถ้าต้องการช่วงเวลาเฉพาะ)"
+                },
+                "end_date": {
+                    "type": "string",
+                    "description": "วันที่สิ้นสุด YYYY-MM-DD"
+                }
+            },
+            "required": ["period"]
+        }
+    },
+    {
+        "name": "record_transaction",
+        "description": "บันทึกรายรับหรือรายจ่าย",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "type": {
+                    "type": "string",
+                    "description": "'income' หรือ 'expense'",
+                    "enum": ["income", "expense"]
+                },
+                "category": {
+                    "type": "string",
+                    "description": "หมวดหมู่ เช่น 'ค่าน้ำ', 'ค่าไฟ', 'เงินเดือน'"
+                },
+                "amount": {
+                    "type": "number",
+                    "description": "จำนวนเงิน"
+                },
+                "description": {
+                    "type": "string",
+                    "description": "รายละเอียด"
+                },
+                "payment_method": {
+                    "type": "string",
+                    "description": "วิธีชำระเงิน"
+                }
+            },
+            "required": ["type", "category", "amount"]
+        }
+    },
+    {
+        "name": "search_guest",
+        "description": "ค้นหาข้อมูลลูกค้า",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "ชื่อหรือเบอร์โทรศัพท์ที่ต้องการค้นหา"
+                }
+            },
+            "required": ["query"]
+        }
+    },
+    {
+        "name": "generate_report",
+        "description": "สร้างรายงาน",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "report_type": {
+                    "type": "string",
+                    "description": "ประเภทรายงาน",
+                    "enum": ["daily", "monthly", "financial", "occupancy"]
+                },
+                "period": {
+                    "type": "string",
+                    "description": "ช่วงเวลา เช่น 'today', 'this_month'"
+                },
+                "format": {
+                    "type": "string",
+                    "description": "รูปแบบไฟล์",
+                    "enum": ["text", "pdf", "excel"]
+                }
+            },
+            "required": ["report_type"]
+        }
+    }
+]
+
+async def execute_tool(tool_name: str, tool_input: dict):
+    """Execute tool function"""
+    db = next(get_db())
+    
+    try:
+        if tool_name == "get_dashboard":
+            return await get_dashboard_data(db)
+        
+        elif tool_name == "check_room_availability":
+            return await check_availability(db, tool_input)
+        
+        elif tool_name == "create_booking":
+            return await create_booking(db, tool_input)
+        
+        elif tool_name == "get_financial_summary":
+            return await get_financial_summary(db, tool_input)
+        
+        elif tool_name == "record_transaction":
+            return await record_transaction(db, tool_input)
+        
+        elif tool_name == "search_guest":
+            return await search_guest(db, tool_input)
+        
+        elif tool_name == "generate_report":
+            return await generate_report(db, tool_input)
+        
+        else:
+            return {"error": f"Unknown tool: {tool_name}"}
+    
+    except Exception as e:
+        return {"error": str(e)}
+    
+    finally:
+        db.close()
+
+# Implementation of tool functions
+async def get_dashboard_data(db):
+    """ดึงข้อมูล Dashboard"""
+    from models.room import Room
+    from models.transaction import Transaction
+    from sqlalchemy import func
+    
+    today = date.today
+```python
+# ตั้งเวลาส่งรายงาน 18:00 ทุกวัน
+scheduler.add_job(
+    send_daily_report,
+    'cron',
+    hour=18,
+    minute=0,
+    id='daily_report'
+)
+
+# รายงานรายสัปดาห์ ทุกวันอาทิตย์ 20:00
+async def send_weekly_report():
+    """ส่งรายงานประจำสัปดาห์"""
+    # Implementation...
+    pass
+
+scheduler.add_job(
+    send_weekly_report,
+    'cron',
+    day_of_week='sun',
+    hour=20,
+    minute=0,
+    id='weekly_report'
+)
+
+# รายงานรายเดือน วันแรกของเดือน 09:00
+async def send_monthly_report():
+    """ส่งรายงานประจำเดือน"""
+    # Implementation...
+    pass
+
+scheduler.add_job(
+    send_monthly_report,
+    'cron',
+    day=1,
+    hour=9,
+    minute=0,
+    id='monthly_report'
+)
+
+# เตือนการจ่ายเงินเดือน วันที่ 3 ของทุกเดือน
+async def remind_payroll():
+    """เตือนจ่ายเงินเดือน"""
+    message = """
+⏰ แจ้งเตือน: ใกล้ถึงวันจ่ายเงินเดือน
+
+📅 วันที่จ่าย: 5 ของเดือนนี้
+💰 จำนวนพนักงาน: 15 คน
+💵 ยอดรวม: ฿285,000
+
+ต้องการดูรายละเอียดหรือไม่?
+    """
+    
+    for admin_id in settings.ADMIN_USERS:
+        await bot.send_message(chat_id=admin_id, text=message)
+
+scheduler.add_job(
+    remind_payroll,
+    'cron',
+    day=3,
+    hour=10,
+    minute=0,
+    id='payroll_reminder'
+)
+```
+
+### 5. Webhook Integration (แจ้งเตือน Booking.com, Agoda)
+
+```python
+# bot/webhooks.py
+from fastapi import APIRouter, Request, HTTPException
+from typing import Dict
+
+webhook_router = APIRouter()
+
+@webhook_router.post("/webhook/booking-com")
+async def booking_com_webhook(request: Request):
+    """รับการจองจาก Booking.com"""
+    data = await request.json()
+    
+    # ตรวจสอบ signature
+    if not verify_booking_signature(data, request.headers):
+        raise HTTPException(status_code=401, detail="Invalid signature")
+    
+    # แปลงข้อมูล
+    booking_data = {
+        "guest_name": data['guest']['name'],
+        "guest_phone": data['guest']['phone'],
+        "check_in_date": data['checkin'],
+        "check_out_date": data['checkout'],
+        "room_type": map_booking_room_type(data['room_type']),
+        "payment_method": "บัตรเครดิต",
+        "deposit": data['prepayment'],
+        "source": "Booking.com",
+        "confirmation_code": data['booking_id']
+    }
+    
+    # สร้างการจอง
+    db = next(get_db())
+    result = await create_booking(db, booking_data)
+    
+    # แจ้งเตือนผู้จัดการทาง Telegram
+    notification = f"""
+🔔 การจองใหม่จาก Booking.com!
+
+รหัสจอง: {result['booking_code']}
+ลูกค้า: {result['guest_name']}
+ห้อง: {result['room_number']}
+Check-in: {result['check_in']}
+Check-out: {result['check_out']}
+ราคา: ฿{result['total_price']:,.0f}
+
+✅ บันทึกในระบบเรียบร้อยแล้ว
+    """
+    
+    for admin_id in settings.ADMIN_USERS:
+        await bot.send_message(chat_id=admin_id, text=notification)
+    
+    return {"status": "success", "booking_code": result['booking_code']}
+
+@webhook_router.post("/webhook/agoda")
+async def agoda_webhook(request: Request):
+    """รับการจองจาก Agoda"""
+    # Similar implementation
+    pass
+```
+
+### 6. Analytics Dashboard Integration
+
+```python
+# ai_agent/tools.py - เพิ่ม tool ใหม่
+
+{
+    "name": "get_analytics",
+    "description": "ดึงข้อมูลวิเคราะห์เชิงลึก เช่น แนวโน้ม, การพยากรณ์, เปรียบเทียบ",
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "metric": {
+                "type": "string",
+                "description": "ตัวชี้วัดที่ต้องการ",
+                "enum": ["occupancy_trend", "revenue_forecast", "guest_segmentation", "peak_hours"]
+            },
+            "period": {
+                "type": "string",
+                "description": "ช่วงเวลา"
+            }
+        },
+        "required": ["metric"]
+    }
+}
+
+async def get_analytics(db, params):
+    """วิเคราะห์ข้อมูลเชิงลึก"""
+    metric = params['metric']
+    
+    if metric == "occupancy_trend":
+        # วิเคราะห์แนวโน้มการใช้ห้อง
+        from sqlalchemy import func, extract
+        from datetime import timedelta
+        
+        today = date.today()
+        days_back = 30
+        
+        trend_data = []
+        for i in range(days_back, -1, -1):
+            target_date = today - timedelta(days=i)
+            
+            total = db.query(Room).count()
+            occupied = db.query(Booking).filter(
+                Booking.check_in_date <= target_date,
+                Booking.check_out_date > target_date,
+                Booking.status.in_(['confirmed', 'checked_in'])
+            ).count()
+            
+            trend_data.append({
+                "date": target_date.isoformat(),
+                "occupancy_rate": round(occupied / total * 100, 1) if total > 0 else 0
+            })
+        
+        # คำนวณแนวโน้ม
+        avg_occupancy = sum(d['occupancy_rate'] for d in trend_data) / len(trend_data)
+        recent_avg = sum(d['occupancy_rate'] for d in trend_data[-7:]) / 7
+        trend = "เพิ่มขึ้น" if recent_avg > avg_occupancy else "ลดลง"
+        
+        return {
+            "metric": "occupancy_trend",
+            "period": f"{days_back} วันล่าสุด",
+            "data": trend_data,
+            "analysis": {
+                "average": round(avg_occupancy, 1),
+                "recent_average": round(recent_avg, 1),
+                "trend": trend,
+                "change_percent": round(((recent_avg - avg_occupancy) / avg_occupancy * 100), 1)
+            }
+        }
+    
+    elif metric == "revenue_forecast":
+        # พยากรณ์รายได้ (Simple Moving Average)
+        from sqlalchemy import func
+        
+        # ดึงรายได้ 30 วันล่าสุด
+        transactions = db.query(
+            Transaction.transaction_date,
+            func.sum(Transaction.amount).label('daily_income')
+        ).filter(
+            Transaction.type == 'income',
+            Transaction.transaction_date >= date.today() - timedelta(days=30)
+        ).group_by(Transaction.transaction_date).all()
+        
+        # คำนวณค่าเฉลี่ย
+        avg_daily = sum(t.daily_income for t in transactions) / len(transactions) if transactions else 0
+        
+        # พยากรณ์ 7 วันข้างหน้า
+        forecast = []
+        for i in range(1, 8):
+            forecast_date = date.today() + timedelta(days=i)
+            # Simple forecast (ใน production ใช้ model ที่ซับซ้อนกว่า)
+            forecast.append({
+                "date": forecast_date.isoformat(),
+                "predicted_income": float(avg_daily),
+                "confidence": "medium"
+            })
+        
+        return {
+            "metric": "revenue_forecast",
+            "historical_average": float(avg_daily),
+            "forecast": forecast,
+            "note": "พยากรณ์จากค่าเฉลี่ย 30 วันล่าสุด"
+        }
+    
+    elif metric == "guest_segmentation":
+        # แบ่งกลุ่มลูกค้า
+        from sqlalchemy import func
+        
+        segments = db.query(
+            Guest.guest_level,
+            func.count(Guest.id).label('count'),
+            func.sum(Guest.total_spent).label('total_revenue'),
+            func.avg(Guest.total_stays).label('avg_stays')
+        ).group_by(Guest.guest_level).all()
+        
+        result = []
+        for seg in segments:
+            result.append({
+                "level": seg.guest_level,
+                "count": seg.count,
+                "total_revenue": float(seg.total_revenue or 0),
+                "avg_stays": round(float(seg.avg_stays or 0), 1),
+                "avg_spend_per_guest": float((seg.total_revenue or 0) / seg.count)
+            })
+        
+        return {
+            "metric": "guest_segmentation",
+            "segments": result
+        }
+    
+    return {"error": "Unknown metric"}
+```
+
+---
+
+## 🚀 Deployment Guide
+
+### 1. Docker Setup
+
+```dockerfile
+# Dockerfile
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    postgresql-client \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Python dependencies
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy application
+COPY . .
+
+# Run bot
+CMD ["python", "bot/main.py"]
+```
+
+```yaml
+# docker-compose.yml
+version: '3.8'
+
+services:
+  db:
+    image: postgres:15
+    environment:
+      POSTGRES_USER: hotel_admin
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: hotel_db
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U hotel_admin"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+
+  telegram-bot:
+    build: .
+    environment:
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+      DATABASE_URL: postgresql://hotel_admin:${DB_PASSWORD}@db:5432/hotel_db
+      REDIS_URL: redis://redis:6379/0
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    restart: unless-stopped
+
+  # Optional: Web Dashboard
+  web-dashboard:
+    build: ./frontend
+    ports:
+      - "3000:3000"
+    environment:
+      REACT_APP_API_URL: http://telegram-bot:8000/api
+    depends_on:
+      - telegram-bot
+
+volumes:
+  postgres_data:
+  redis_data:
+```
+
+### 2. Deploy to Cloud
+
+```bash
+# Deploy to Railway.app (ง่ายที่สุด)
+1. Push code to GitHub
+2. Connect to Railway.app
+3. Add Environment Variables
+4. Deploy!
+
+# Deploy to AWS EC2
+ssh ubuntu@your-server-ip
+git clone https://github.com/your-repo/hotel-bot.git
+cd hotel-bot
+docker-compose up -d
+
+# Deploy to Heroku
+heroku create hotel-telegram-bot
+heroku addons:create heroku-postgresql:hobby-dev
+heroku addons:create heroku-redis:hobby-dev
+git push heroku main
+
+# Deploy to DigitalOcean
+# ใช้ App Platform หรือ Droplet + Docker
+```
+
+### 3. SSL Certificate (ถ้ามี Web Dashboard)
+
+```bash
+# ใช้ Let's Encrypt + Nginx
+sudo apt install certbot python3-certbot-nginx
+sudo certbot --nginx -d yourdomain.com
+```
+
+---
+
+## 💰 Cost Analysis
+
+### Option 1: Cloud Hosting (Recommended)
+
+```
+Monthly Costs:
+
+Server (Railway.app / Heroku):
+├─ Basic Plan: $5-10/month
+└─ Includes: 512MB RAM, PostgreSQL, Redis
+
+Database:
+├─ PostgreSQL: Included
+└─ Backup: $2/month (optional)
+
+AI API (Claude):
+├─ Input: ~$3/M tokens
+├─ Output: ~$15/M tokens
+└─ Estimated: $20-50/month (depends on usage)
+
+Total: $25-62/month
+```
+
+### Option 2: VPS (DigitalOcean, Vultr)
+
+```
+Monthly Costs:
+
+VPS:
+├─ 2GB RAM, 50GB SSD: $12/month
+└─ Bandwidth: 2TB included
+
+AI API (Claude):
+└─ Same as above: $20-50/month
+
+Total: $32-62/month
+```
+
+### Option 3: Self-Hosted (Cheapest)
+
+```
+One-time Cost:
+├─ Raspberry Pi 4 (8GB): $75
+└─ MicroSD 128GB: $20
+
+Monthly Cost:
+├─ Electricity: ~$3/month
+├─ Internet: Existing
+└─ AI API: $20-50/month
+
+Total: $23-53/month (after initial investment)
+```
+
+---
+
+## 📊 Performance Metrics
+
+### Expected Performance:
+
+```
+Response Time:
+├─ Simple queries (dashboard): 1-2 seconds
+├─ Complex queries (reports): 3-5 seconds
+└─ AI processing: 2-10 seconds (depends on Claude API)
+
+Concurrent Users:
+├─ Telegram Bot: Unlimited (async)
+├─ Database: 100+ connections
+└─ Recommended: 5-10 active users
+
+Data Storage:
+├─ Database: ~100MB-1GB/year
+└─ Files (images, PDFs): ~5-10GB/year
+
+Availability:
+└─ 99.9% uptime (with proper hosting)
+```
+
+---
+
+## 🎓 Training Guide for Staff
+
+### การอบรมพนักงาน (1 ชั่วโมง)
+
+```
+15 นาทีแรก: บทนำ
+├─ แนะนำ Telegram Bot
+├─ เพิ่มเพื่อนใน Telegram
+└─ ทดสอบคำสั่งพื้นฐาน
+
+20 นาที: ฝึกใช้งานหลัก
+├─ จองห้อง
+├─ ค้นหาลูกค้า
+├─ บันทึกรายรับ-รายจ่าย
+└─ ดู Dashboard
+
+15 นาที: ฟีเจอร์ขั้นสูง
+├─ สร้างรายงาน
+├─ ส่งรูปภาพ/ไฟล์
+└─ ใช้คำสั่งเสียง
+
+10 นาที: Q&A
+└─ ตอบคำถามและแก้ปัญหา
+```
+
+---
+
+## 🔐 Security Best Practices
+
+```python
+# 1. Role-Based Access Control
+ROLES = {
+    "admin": ["all"],
+    "manager": ["dashboard", "bookings", "finance", "reports"],
+    "receptionist": ["bookings", "guests", "rooms"],
+    "accountant": ["finance", "reports"]
+}
+
+async def check_permission(user_id: int, action: str) -> bool:
+    user = get_user(user_id)
+    user_permissions = ROLES.get(user.role, [])
+    return "all" in user_permissions or action in user_permissions
+
+# 2. Audit Log
+async def log_action(user_id: int, action: str, details: dict):
+    db.add(AuditLog(
+        user_id=user_id,
+        action=action,
+        details=json.dumps(details),
+        timestamp=datetime.now(),
+        ip_address=get_user_ip(user_id)
+    ))
+    db.commit()
+
+# 3. Rate Limiting
+from functools import wraps
+from collections import defaultdict
+import time
+
+user_requests = defaultdict(list)
+
+def rate_limit(max_requests=10, window=60):
+    """Limit requests per user"""
+    def decorator(func):
+        @wraps(func)
+        async def wrapper(update, context):
+            user_id = update.effective_user.id
+            now = time.time()
+            
+            # Clean old requests
+            user_requests[user_id] = [
+                req_time for req_time in user_requests[user_id]
+                if now - req_time < window
+            ]
+            
+            if len(user_requests[user_id]) >= max_requests:
+                await update.message.reply_text(
+                    "⚠️ คำขอมากเกินไป กรุณารอสักครู่"
+                )
+                return
+            
+            user_requests[user_id].append(now)
+            return await func(update, context)
+        return wrapper
+    return decorator
+
+# 4. Data Encryption
+from cryptography.fernet import Fernet
+
+def encrypt_sensitive_data(data: str) -> str:
+    key = settings.ENCRYPTION_KEY
+    f = Fernet(key)
+    return f.encrypt(data.encode()).decode()
+
+def decrypt_sensitive_data(encrypted: str) -> str:
+    key = settings.ENCRYPTION_KEY
+    f = Fernet(key)
+    return f.decrypt(encrypted.encode()).decode()
+```
+
+---
+
+## ✅ สรุปและคำแนะนำสุดท้าย
+
+### ✨ ข้อดีของระบบ Telegram Bot + AI Agent:
+
+```
+1. ✅ ใช้งานง่าย - สนทนาภาษาธรรมชาติ
+2. ✅ เข้าถึงได้ทุกที่ - มือถือ, แท็บเล็ต, คอมพิวเตอร์
+3. ✅ ตอบสนองเร็ว - Real-time notifications
+4. ✅ ไม่ต้องอบรม - UI ที่คุ้นเคย (Telegram)
+5. ✅ ประหยัดต้นทุน - ไม่ต้องพัฒนา Mobile App
+6. ✅ AI-Powered - เข้าใจบริบท ตอบคำถามได้หลากหลาย
+7. ✅ Scalable - รองรับผู้ใช้หลายคนพร้อมกัน
+8. ✅ Secure - Telegram มี E2E encryption
+```
+
+### 🎯 เหมาะกับ:
+
+```
+✅ โรงแรมขนาดเล็ก-กลาง (5-100 ห้อง)
+✅ ทีมงาน 3-15 คน
+✅ งบประมาณ $1,000-$5,000 (Development)
+✅ ต้องการระบบที่ทันสมัยและยืดหยุ่น
+✅ พนักงานคุ้นเคยกับ Telegram
+```
+
+### 🚀 Roadmap:
+
+```
+Phase 1 (2 สัปดาห์): Core Bot + Basic Commands
+Phase 2 (2 สัปดาห์): AI Agent + Tools Integration
+Phase 3 (1 สัปดาห์): Advanced Features
+Phase 4 (1 สัปดาห์): Testing & Deployment
+
+รวม: 6 สัปดาห์ (1.5 เดือน)
+```
+
+### 💡 คำแนะนำ:
+
+**ถ้าคุณมีทีมพัฒนาหรือ Budget:**
+→ **เลือก Telegram Bot + AI Agent** (สมัยใหม่ ยืดหยุ่น ขยายได้ในอนาคต)
+
+**ถ้าต้องการเริ่มเร็วและประหยัด:**
+→ **เริ่มด้วย Google Sheets** แล้วค่อยอัปเกรดเป็น Bot ทีหลัง
+
+**Best of Both Worlds:**
+→ **ใช้ทั้งสอง** - Sheets สำหรับรายงานละเอียด, Bot สำหรับงานประจำวัน
+
+---
+
+**🎉 พร้อมเริ่มพัฒนาแล้ว!** มีคำถามเพิ่มเติมไหมครับ? 😊
