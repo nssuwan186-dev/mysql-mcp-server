@@ -212,15 +212,7 @@ func TestMariaDB_SecurityBoundaries(t *testing.T) {
 	for _, q := range embeddedQueries {
 		err := util.ValidateSQL(q)
 		if err == nil {
-			// If it's a SELECT, we check if it hits the blocked patterns for schemas in tools.go
-			// but ValidateSQL has:
-			// {regexp.MustCompile(`(?i)\bMYSQL\s*\.\b`), "mysql system database access"},
-			// in ValidateWhereClause. Let's check if it's in ValidateSQL too.
-
-			// Wait, ValidateSQL doesn't use dangerousWherePatterns.
-			// But for toolRunQuery, it uses ValidateSQL.
-
-			t.Logf("Query passed ValidateSQL (might be allowed if it's a subselect): %s", q)
+			t.Errorf("Security risk: ValidateSQL should have blocked embedded query: %s", q)
 		} else {
 			t.Logf("Query correctly blocked: %s (Reason: %v)", q, err)
 		}
