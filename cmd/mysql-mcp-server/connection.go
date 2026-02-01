@@ -5,11 +5,21 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/askdba/mysql-mcp-server/internal/config"
 	"github.com/askdba/mysql-mcp-server/internal/util"
+)
+
+// ServerType represents the type of the database server.
+type ServerType string
+
+const (
+	ServerTypeMySQL   ServerType = "mysql"
+	ServerTypeMariaDB ServerType = "mariadb"
+	ServerTypeUnknown ServerType = "unknown"
 )
 
 // ===== Multi-DSN Connection Manager =====
@@ -18,6 +28,7 @@ import (
 type ConnectionManager struct {
 	connections map[string]*sql.DB
 	configs     map[string]config.ConnectionConfig
+	serverTypes map[string]ServerType
 	activeConn  string
 	mu          sync.RWMutex
 }
@@ -27,6 +38,7 @@ func NewConnectionManager() *ConnectionManager {
 	return &ConnectionManager{
 		connections: make(map[string]*sql.DB),
 		configs:     make(map[string]config.ConnectionConfig),
+		serverTypes: make(map[string]ServerType),
 	}
 }
 
@@ -80,6 +92,11 @@ func (cm *ConnectionManager) AddConnectionWithPoolConfig(connCfg config.Connecti
 
 	cm.connections[connCfg.Name] = conn
 	cm.configs[connCfg.Name] = connCfg
+
+	// Detect server type with a dedicated context to avoid sharing timeout with PingContext
+	ctxDetect, cancelDetect := context.WithTimeout(context.Background(), pingTimeout)
+	defer cancelDetect()
+	cm.serverTypes[connCfg.Name] = cm.detectServerType(ctxDetect, conn)
 
 	// Set as active if it's the first connection
 	if cm.activeConn == "" {
@@ -147,4 +164,50 @@ func getDB() *sql.DB {
 		panic("getDB called before connManager initialized")
 	}
 	return connManager.GetActiveDB()
+}
+
+// GetServerType returns the server type of the active connection.
+func (cm *ConnectionManager) GetServerType() ServerType {
+	cm.mu.RLock()
+	defer cm.mu.RUnlock()
+	if st, exists := cm.serverTypes[cm.activeConn]; exists {
+		return st
+	}
+	return ServerTypeUnknown
+}
+
+// detectServerType queries the server to determine if it's MySQL or MariaDB.
+func (cm *ConnectionManager) detectServerType(ctx context.Context, db *sql.DB) ServerType {
+	var version, versionComment string
+	// Try VERSION() and @@version_comment first
+	err := db.QueryRowContext(ctx, "SELECT VERSION(), @@version_comment").Scan(&version, &versionComment)
+	if err != nil {
+		// Fallback to just VERSION() if the combined query fails
+		err = db.QueryRowContext(ctx, "SELECT VERSION()").Scan(&version)
+		if err != nil {
+			return ServerTypeUnknown
+		}
+	}
+
+	version = strings.TrimSpace(strings.ToLower(version))
+	versionComment = strings.TrimSpace(strings.ToLower(versionComment))
+
+	// If we got nothing back, we can't reliably identify the server
+	if version == "" && versionComment == "" {
+		return ServerTypeUnknown
+	}
+
+	if strings.Contains(version, "mariadb") || strings.Contains(versionComment, "mariadb") {
+		return ServerTypeMariaDB
+	}
+
+	return ServerTypeMySQL
+}
+
+// getServerType is a helper to get the active server type.
+func getServerType() ServerType {
+	if connManager == nil {
+		return ServerTypeUnknown
+	}
+	return connManager.GetServerType()
 }
