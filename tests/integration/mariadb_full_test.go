@@ -59,29 +59,6 @@ func TestMariaDB_JSONConsistency(t *testing.T) {
 	}
 }
 
-// TestMariaDB_PerformanceSchemaFallback verifies that toolServerInfo still works
-// if Performance Schema is restricted or missing (simulated by non-existent table error).
-func TestMariaDB_PerformanceSchemaFallback(t *testing.T) {
-	// This test relies on the fact that our tool implementation already has fallback logic.
-	// We can't easily "disable" PS in a shared container without affecting other tests,
-	// but we can verify that the fallback query (SHOW VARIABLES) returns valid data
-	// by checking if the required fields are populated in toolServerInfo.
-
-	// Since we are in integration tests, we can call the tool handler if we mock the environment
-	// or just rely on the existing integration tests which are already passing on MariaDB
-	// where PS might be less populated than MySQL.
-
-	// Manual verification: we know tools.go uses:
-	// SELECT ... FROM performance_schema.global_variables
-	// and falls back to:
-	// SHOW VARIABLES ...
-
-	// Let's add a test that explicitly tries the SHOW fallback logic if possible.
-	// (Actual implementation is in cmd/mysql-mcp-server/tools.go:401)
-
-	t.Log("Note: Fallback is verified by the fact that toolServerInfo works on MariaDB 11.4")
-}
-
 // TestMariaDB_SpecialObjects verifies compatibility with MariaDB-specific objects like Sequences.
 func TestMariaDB_SpecialObjects(t *testing.T) {
 	db := setupTestDB(t)
