@@ -170,6 +170,12 @@ var blockedPatterns = []*regexp.Regexp{
 	// SQL comments (could be used to truncate/hide malicious SQL)
 	regexp.MustCompile(`--`),
 	regexp.MustCompile(`/\*`),
+
+	// System schema access (information disclosure)
+	regexp.MustCompile(`(?i)\bMYSQL\s*\.\b`),
+	regexp.MustCompile(`(?i)\bINFORMATION_SCHEMA\s*\.\b`),
+	regexp.MustCompile(`(?i)\bPERFORMANCE_SCHEMA\s*\.\b`),
+	regexp.MustCompile(`(?i)\bSYS\s*\.\b`),
 }
 
 // Allowed query prefixes (read-only operations).
