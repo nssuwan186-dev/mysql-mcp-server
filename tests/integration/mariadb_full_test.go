@@ -29,6 +29,9 @@ func TestMariaDB_JSONConsistency(t *testing.T) {
 	// 1. Insert and retrieve complex JSON
 	jsonInput := `{"user": "test", "active": true, "tags": ["mcp", "mariadb"], "data": {"nested": 123}}`
 	_, err := db.ExecContext(ctx, "DELETE FROM special_data WHERE id = 999") // Clean up
+	if err != nil {
+		t.Fatalf("cleanup delete failed: %v", err)
+	}
 	_, err = db.ExecContext(ctx, "INSERT INTO special_data (id, json_data) VALUES (999, ?)", jsonInput)
 	if err != nil {
 		t.Fatalf("failed to insert JSON: %v", err)
