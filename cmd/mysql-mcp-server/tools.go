@@ -123,7 +123,7 @@ func toolListTables(
 	}
 
 	if err := rows.Err(); err != nil {
-		return nil, ListTablesOutput{}, fmt.Errorf("row iteration failed: %w", err)
+		return nil, ListTablesOutput{}, fmt.Errorf("ListTables rows iteration: %w", err)
 	}
 
 	return nil, out, nil
@@ -316,6 +316,7 @@ func toolRunQuery(
 		if auditLogger != nil {
 			auditLogger.Log(&AuditEntry{
 				Tool:        "run_query",
+				Database:    database,
 				Query:       util.TruncateQuery(sqlText, 500),
 				DurationMs:  timer.ElapsedMs(),
 				InputTokens: inputTokens,
@@ -390,13 +391,6 @@ func toolRunQuery(
 		rowsClosed = true
 	}
 
-	if err := rows.Err(); err != nil {
-		return nil, QueryResult{}, fmt.Errorf("row iteration failed: %w", err)
-	}
-
-	// Explicitly close rows before committing transaction to avoid "Commands out of sync"
-	rows.Close()
-
 	// Token estimation for output (optional)
 	outputTokens, _ := estimateTokensForValue(out)
 	tokens.OutputEstimated = outputTokens
@@ -405,16 +399,12 @@ func toolRunQuery(
 	// Calculate efficiency metrics
 	eff := CalculateEfficiency(inputTokens, outputTokens, len(out.Rows))
 
-	// Commit if everything succeeded (important for INSERT/UPDATE/etc.)
-	if err := tx.Commit(); err != nil {
-		return nil, QueryResult{}, fmt.Errorf("failed to commit transaction: %w", err)
-	}
-
 	// Log success
 	timer.LogSuccess(len(out.Rows), sqlText, tokens, eff)
 	if auditLogger != nil {
 		entry := &AuditEntry{
 			Tool:         "run_query",
+			Database:     database,
 			Query:        util.TruncateQuery(sqlText, 500),
 			DurationMs:   timer.ElapsedMs(),
 			RowCount:     len(out.Rows),
