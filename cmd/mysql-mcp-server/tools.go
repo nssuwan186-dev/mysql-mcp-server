@@ -47,7 +47,6 @@ func toolListDatabases(
 			break
 		}
 	}
-
 	if err := rows.Err(); err != nil {
 		return nil, ListDatabasesOutput{}, fmt.Errorf("row iteration failed: %w", err)
 	}
@@ -105,9 +104,18 @@ func toolListTables(
 			break
 		}
 	}
-
 	if err := rows.Err(); err != nil {
 		return nil, ListTablesOutput{}, fmt.Errorf("ListTables rows iteration: %w", err)
+	}
+
+	if len(out.Tables) == 0 {
+		exists, err := schemaExists(ctx, input.Database)
+		if err != nil {
+			return nil, ListTablesOutput{}, err
+		}
+		if !exists {
+			return nil, ListTablesOutput{}, fmt.Errorf("database not found: %s", input.Database)
+		}
 	}
 
 	return nil, out, nil
@@ -167,12 +175,62 @@ func toolDescribeTable(
 			break
 		}
 	}
-
 	if err := rows.Err(); err != nil {
 		return nil, DescribeTableOutput{}, fmt.Errorf("row iteration failed: %w", err)
 	}
 
+	if len(out.Columns) == 0 {
+		exists, err := tableExists(ctx, input.Database, input.Table)
+		if err != nil {
+			return nil, DescribeTableOutput{}, err
+		}
+		if !exists {
+			schemaOk, err := schemaExists(ctx, input.Database)
+			if err != nil {
+				return nil, DescribeTableOutput{}, err
+			}
+			if !schemaOk {
+				return nil, DescribeTableOutput{}, fmt.Errorf("database not found: %s", input.Database)
+			}
+			return nil, DescribeTableOutput{}, fmt.Errorf("table not found: %s.%s", input.Database, input.Table)
+		}
+		return nil, DescribeTableOutput{}, fmt.Errorf("no columns found for table: %s.%s", input.Database, input.Table)
+	}
+
 	return nil, out, nil
+}
+
+func schemaExists(ctx context.Context, database string) (bool, error) {
+	var found int
+	err := getDB().QueryRowContext(
+		ctx,
+		"SELECT 1 FROM information_schema.SCHEMATA WHERE SCHEMA_NAME = ? LIMIT 1",
+		database,
+	).Scan(&found)
+	if err == nil {
+		return true, nil
+	}
+	if err == sql.ErrNoRows {
+		return false, nil
+	}
+	return false, fmt.Errorf("schema existence check failed: %w", err)
+}
+
+func tableExists(ctx context.Context, database, table string) (bool, error) {
+	var found int
+	err := getDB().QueryRowContext(
+		ctx,
+		"SELECT 1 FROM information_schema.TABLES WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? LIMIT 1",
+		database,
+		table,
+	).Scan(&found)
+	if err == nil {
+		return true, nil
+	}
+	if err == sql.ErrNoRows {
+		return false, nil
+	}
+	return false, fmt.Errorf("table existence check failed: %w", err)
 }
 
 func toolRunQuery(
@@ -246,7 +304,6 @@ func toolRunQuery(
 		if auditLogger != nil {
 			auditLogger.Log(&AuditEntry{
 				Tool:        "run_query",
-				Database:    database,
 				Query:       util.TruncateQuery(sqlText, 500),
 				DurationMs:  timer.ElapsedMs(),
 				InputTokens: inputTokens,
@@ -257,6 +314,11 @@ func toolRunQuery(
 		return nil, QueryResult{}, fmt.Errorf("query failed: %w", err)
 	}
 	rowsClosed := false
+	defer func() {
+		if !rowsClosed {
+			_ = rows.Close()
+		}
+	}()
 
 	out := QueryResult{
 		Columns: make([]string, 0),
@@ -265,6 +327,8 @@ func toolRunQuery(
 
 	columns, err := rows.Columns()
 	if err != nil {
+		_ = rows.Close()
+		rowsClosed = true
 		return nil, QueryResult{}, fmt.Errorf("failed to get columns: %w", err)
 	}
 	out.Columns = columns
@@ -279,6 +343,8 @@ func toolRunQuery(
 		}
 
 		if err := rows.Scan(valuePtrs...); err != nil {
+			_ = rows.Close()
+			rowsClosed = true
 			return nil, QueryResult{}, fmt.Errorf("failed to scan row: %w", err)
 		}
 
@@ -302,6 +368,8 @@ func toolRunQuery(
 
 	if !rowsClosed {
 		if err := rows.Err(); err != nil {
+			_ = rows.Close()
+			rowsClosed = true
 			return nil, QueryResult{}, fmt.Errorf("row iteration failed: %w", err)
 		}
 		if err := rows.Close(); err != nil {
@@ -323,7 +391,6 @@ func toolRunQuery(
 	if auditLogger != nil {
 		entry := &AuditEntry{
 			Tool:         "run_query",
-			Database:     database,
 			Query:        util.TruncateQuery(sqlText, 500),
 			DurationMs:   timer.ElapsedMs(),
 			RowCount:     len(out.Rows),
