@@ -378,6 +378,10 @@ func toolRunQuery(
 		rowsClosed = true
 	}
 
+	if err := rows.Err(); err != nil {
+		return nil, QueryResult{}, fmt.Errorf("row iteration failed: %w", err)
+	}
+
 	// Token estimation for output (optional)
 	outputTokens, _ := estimateTokensForValue(out)
 	tokens.OutputEstimated = outputTokens
