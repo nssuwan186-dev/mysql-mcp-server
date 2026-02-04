@@ -386,6 +386,11 @@ func toolRunQuery(
 	// Calculate efficiency metrics
 	eff := CalculateEfficiency(inputTokens, outputTokens, len(out.Rows))
 
+	// Commit if everything succeeded (important for INSERT/UPDATE/etc.)
+	if err := tx.Commit(); err != nil {
+		return nil, QueryResult{}, fmt.Errorf("failed to commit transaction: %w", err)
+	}
+
 	// Log success
 	timer.LogSuccess(len(out.Rows), sqlText, tokens, eff)
 	if auditLogger != nil {
