@@ -298,9 +298,7 @@ func TestToolRunQuerySelectSuccess(t *testing.T) {
 		AddRow(1, "Alice", "alice@example.com").
 		AddRow(2, "Bob", "bob@example.com")
 
-	mock.ExpectBegin()
 	mock.ExpectQuery("SELECT \\* FROM users").WillReturnRows(rows)
-	mock.ExpectCommit()
 
 	ctx := context.Background()
 	_, output, err := toolRunQuery(ctx, &mcp.CallToolRequest{}, RunQueryInput{
@@ -379,9 +377,7 @@ func TestToolRunQueryWithMaxRows(t *testing.T) {
 		AddRow(4).
 		AddRow(5)
 
-	mock.ExpectBegin()
 	mock.ExpectQuery("SELECT id FROM numbers").WillReturnRows(rows)
-	mock.ExpectCommit()
 
 	ctx := context.Background()
 	maxRows := 3
@@ -437,9 +433,7 @@ func TestToolRunQueryQueryError(t *testing.T) {
 	mock, cleanup := setupMockDB(t)
 	defer cleanup()
 
-	mock.ExpectBegin()
 	mock.ExpectQuery("SELECT \\* FROM nonexistent").WillReturnError(sqlmock.ErrCancelled)
-	mock.ExpectRollback()
 
 	ctx := context.Background()
 	_, _, err := toolRunQuery(ctx, &mcp.CallToolRequest{}, RunQueryInput{
@@ -458,9 +452,6 @@ func TestToolRunQueryQueryError(t *testing.T) {
 func TestToolRunQueryInvalidDatabase(t *testing.T) {
 	mock, cleanup := setupMockDB(t)
 	defer cleanup()
-
-	mock.ExpectBegin()
-	mock.ExpectRollback()
 
 	ctx := context.Background()
 	_, _, err := toolRunQuery(ctx, &mcp.CallToolRequest{}, RunQueryInput{
