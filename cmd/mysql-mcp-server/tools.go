@@ -51,6 +51,10 @@ func toolListDatabases(
 		return nil, ListDatabasesOutput{}, fmt.Errorf("row iteration failed: %w", err)
 	}
 
+	if err := rows.Err(); err != nil {
+		return nil, ListDatabasesOutput{}, fmt.Errorf("row iteration failed: %w", err)
+	}
+
 	return nil, out, nil
 }
 
@@ -116,6 +120,10 @@ func toolListTables(
 		if !exists {
 			return nil, ListTablesOutput{}, fmt.Errorf("database not found: %s", input.Database)
 		}
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, ListTablesOutput{}, fmt.Errorf("row iteration failed: %w", err)
 	}
 
 	return nil, out, nil
@@ -195,6 +203,10 @@ func toolDescribeTable(
 			return nil, DescribeTableOutput{}, fmt.Errorf("table not found: %s.%s", input.Database, input.Table)
 		}
 		return nil, DescribeTableOutput{}, fmt.Errorf("no columns found for table: %s.%s", input.Database, input.Table)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, DescribeTableOutput{}, fmt.Errorf("row iteration failed: %w", err)
 	}
 
 	return nil, out, nil
@@ -381,6 +393,9 @@ func toolRunQuery(
 	if err := rows.Err(); err != nil {
 		return nil, QueryResult{}, fmt.Errorf("row iteration failed: %w", err)
 	}
+
+	// Explicitly close rows before committing transaction to avoid "Commands out of sync"
+	rows.Close()
 
 	// Token estimation for output (optional)
 	outputTokens, _ := estimateTokensForValue(out)
