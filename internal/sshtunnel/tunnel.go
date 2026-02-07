@@ -6,7 +6,9 @@ import (
 	"io"
 	"net"
 	"os"
+	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	"golang.org/x/crypto/ssh"
@@ -22,15 +24,35 @@ type Config struct {
 	Port    int    // SSH port (0 = default 22)
 }
 
+// expandTilde returns path with a leading "~" or "~/" expanded to the user's home directory.
+func expandTilde(path string) (string, error) {
+	if path == "" || (path != "~" && !strings.HasPrefix(path, "~/")) {
+		return path, nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("expand ~ in key path: %w", err)
+	}
+	if path == "~" {
+		return home, nil
+	}
+	return filepath.Join(home, path[2:]), nil
+}
+
 // Tunnel starts a local listener that forwards connections to remoteAddr via SSH.
 // Returns the local address (e.g. "127.0.0.1:12345") and a close function.
 // remoteAddr should be the MySQL server address (e.g. "db.example.com:3306").
+// KeyPath may start with "~/" or be "~" to mean the current user's home directory.
 func Tunnel(cfg Config, remoteAddr string) (localAddr string, closeFn func(), err error) {
 	if cfg.Host == "" || cfg.User == "" || cfg.KeyPath == "" {
 		return "", nil, fmt.Errorf("ssh tunnel requires host, user, and key_path")
 	}
 
-	key, err := os.ReadFile(cfg.KeyPath)
+	keyPath, err := expandTilde(cfg.KeyPath)
+	if err != nil {
+		return "", nil, err
+	}
+	key, err := os.ReadFile(keyPath)
 	if err != nil {
 		return "", nil, fmt.Errorf("read SSH key: %w", err)
 	}
@@ -49,7 +71,7 @@ func Tunnel(cfg Config, remoteAddr string) (localAddr string, closeFn func(), er
 	sshConfig := &ssh.ClientConfig{
 		User:            cfg.User,
 		Auth:            []ssh.AuthMethod{ssh.PublicKeys(signer)},
-		HostKeyCallback: ssh.InsecureIgnoreHostKey(), // bastion; consider AcceptHostKey in future
+		HostKeyCallback: ssh.InsecureIgnoreHostKey(), // Bastion: host key verification not performed; consider known_hosts in future
 		Timeout:         15 * time.Second,
 	}
 
