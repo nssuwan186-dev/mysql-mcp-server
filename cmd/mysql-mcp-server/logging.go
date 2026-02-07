@@ -22,6 +22,9 @@ type LogEntry struct {
 }
 
 func logJSON(level, message string, fields map[string]interface{}) {
+	if silentMode && (level == "INFO" || level == "WARN") {
+		return
+	}
 	entry := LogEntry{
 		Timestamp: time.Now().UTC().Format(time.RFC3339Nano),
 		Level:     level,

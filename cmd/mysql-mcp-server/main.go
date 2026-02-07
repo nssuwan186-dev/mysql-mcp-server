@@ -39,6 +39,9 @@ var (
 	tokenTracking  bool
 	tokenModel     string
 	tokenEstimator TokenEstimator
+
+	// silentMode suppresses INFO and WARN logs (--silent); ERROR still goes to stderr.
+	silentMode bool
 )
 
 // ===== Argument Parsing =====
@@ -48,6 +51,8 @@ type parsedArgs struct {
 	action       string // "", "version", "help", "print-config", "validate-config"
 	configPath   string // path from --config or --config=
 	validatePath string // path for --validate-config
+	silent       bool   // --silent or -s: suppress INFO/WARN logs
+	daemon       bool   // --daemon: fork to background (HTTP mode)
 	err          error  // parsing error (e.g., unknown flag)
 }
 
@@ -84,6 +89,10 @@ func parseArgs(args []string) parsedArgs {
 			result.action = "validate-config"
 			result.validatePath = args[0]
 			args = args[1:]
+		case "--silent", "-s":
+			result.silent = true
+		case "--daemon", "-d":
+			result.daemon = true
 		default:
 			// Check if it's --config=path format
 			if len(arg) > 9 && arg[:9] == "--config=" {
@@ -115,6 +124,8 @@ func main() {
 	if parsed.configPath != "" {
 		config.ConfigFilePath = parsed.configPath
 	}
+	silentMode = parsed.silent
+	maybeDaemonize(parsed)
 
 	// Handle immediate actions
 	switch parsed.action {
@@ -180,7 +191,7 @@ func main() {
 	// Add all connections from config
 	for _, connCfg := range cfg.Connections {
 		if err := connManager.AddConnectionWithPoolConfig(connCfg, cfg); err != nil {
-			log.Printf("Warning: failed to add connection '%s': %v", connCfg.Name, err)
+			logWarn("failed to add connection", map[string]interface{}{"name": connCfg.Name, "error": err.Error()})
 		} else {
 			logInfo("connection added", map[string]interface{}{
 				"name": connCfg.Name,
@@ -313,7 +324,7 @@ func registerVectorTools(server *mcp.Server) {
 }
 
 func registerExtendedTools(server *mcp.Server) {
-	log.Printf("Registering extended MySQL tools...")
+	logInfo("Registering extended MySQL tools...", nil)
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "list_indexes",
@@ -412,6 +423,8 @@ OPTIONS:
     -h, --help                  Show this help message
     -v, --version               Show version information
     -c, --config PATH           Use config file at PATH
+    -s, --silent                Suppress INFO and WARN logs (ERROR still printed)
+    -d, --daemon                Run in background (fork and detach; use with MYSQL_MCP_HTTP=1)
     --print-config              Print current configuration as YAML
     --validate-config PATH      Validate config file at PATH
 
@@ -488,6 +501,12 @@ EXAMPLES:
     export MYSQL_MCP_HTTP=1
     export MYSQL_HTTP_PORT=9306
     mysql-mcp-server
+
+    # Silent mode (production; only errors to stderr)
+    mysql-mcp-server --silent --config /etc/mysql-mcp-server/config.yaml
+
+    # Run HTTP server as daemon (Unix)
+    MYSQL_MCP_HTTP=1 mysql-mcp-server --daemon --config /path/to/config.yaml
 
 FEATURES:
     - Fully read-only (blocks all non-SELECT/SHOW/DESCRIBE/EXPLAIN)

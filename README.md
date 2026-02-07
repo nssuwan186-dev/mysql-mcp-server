@@ -258,7 +258,15 @@ mysql-mcp-server --validate-config /path/to/config.yaml
 
 # Print current configuration as YAML
 mysql-mcp-server --print-config
+
+# Silent mode: suppress INFO/WARN logs (only errors to stderr)
+mysql-mcp-server --silent --config /path/to/config.yaml
+
+# Daemon mode: run HTTP server in background (Unix; use with MYSQL_MCP_HTTP=1)
+MYSQL_MCP_HTTP=1 mysql-mcp-server --daemon --config /path/to/config.yaml
 ```
+
+**Silent and daemon mode:** Use `-s` / `--silent` to reduce log noise in production (INFO and WARN are suppressed; ERROR still goes to stderr). Use `-d` / `--daemon` to run the HTTP server detached in the background on Unix. For long-running services, use the example [systemd unit](contrib/systemd/mysql-mcp-server.service) or [launchd plist](contrib/launchd/com.askdba.mysql-mcp-server.plist). See [Silent and daemon mode](docs/silent-and-daemon.md) for details.
 
 **Priority:** Environment variables override config file values, allowing:
 - Base configuration in file
@@ -1064,6 +1072,17 @@ export MYSQL_HTTP_RATE_LIMIT_BURST=200  # Allow bursts up to 200
 ```
 
 When rate limited, clients receive HTTP 429 (Too Many Requests) with a `Retry-After: 1` header.
+
+### Running as a service (daemon)
+
+To run the REST API server in the background or under a process manager:
+
+- **Unix (foreground detach):** `MYSQL_MCP_HTTP=1 mysql-mcp-server --daemon --config /path/to/config.yaml` (forks and exits the parent; child runs detached).
+- **systemd:** Copy and customize [contrib/systemd/mysql-mcp-server.service](contrib/systemd/mysql-mcp-server.service), then `systemctl enable --now mysql-mcp-server`.
+- **macOS launchd:** Copy and customize [contrib/launchd/com.askdba.mysql-mcp-server.plist](contrib/launchd/com.askdba.mysql-mcp-server.plist) into `~/Library/LaunchAgents/` or `/Library/LaunchDaemons/`.
+- **Windows:** Use a Windows Service wrapper or run in a terminal; `--daemon` is not supported.
+
+Use `--silent` to suppress INFO/WARN logs when running under a service manager. See [docs/silent-and-daemon.md](docs/silent-and-daemon.md).
 
 ### API Endpoints
 

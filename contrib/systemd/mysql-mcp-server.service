@@ -1,0 +1,29 @@
+# systemd unit for mysql-mcp-server (HTTP mode)
+# Copy to /etc/systemd/system/ and adjust paths and environment.
+#
+#   sudo cp contrib/systemd/mysql-mcp-server.service /etc/systemd/system/
+#   sudo edit /etc/systemd/system/mysql-mcp-server.service
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now mysql-mcp-server
+#
+# Use a config file or EnvironmentFile for MYSQL_DSN and other vars.
+
+[Unit]
+Description=MySQL MCP Server (HTTP REST API)
+Documentation=https://github.com/askdba/mysql-mcp-server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/mysql-mcp-server --config /etc/mysql-mcp-server/config.yaml
+# Optional: pass MYSQL_* via environment file
+# EnvironmentFile=/etc/mysql-mcp-server/env
+Restart=on-failure
+RestartSec=5s
+# Run as dedicated user (create with useradd mysql-mcp)
+# User=mysql-mcp
+# Group=mysql-mcp
+
+[Install]
+WantedBy=multi-user.target
