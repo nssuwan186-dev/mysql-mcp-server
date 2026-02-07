@@ -159,11 +159,11 @@ func TestHTTPListDatabases(t *testing.T) {
 	mock, cleanup := setupHTTPTest(t)
 	defer cleanup()
 
-	rows := sqlmock.NewRows([]string{"Database"}).
+	rows := sqlmock.NewRows([]string{"SCHEMA_NAME"}).
 		AddRow("information_schema").
 		AddRow("mysql").
 		AddRow("testdb")
-	mock.ExpectQuery("SHOW DATABASES").WillReturnRows(rows)
+	mock.ExpectQuery("SELECT SCHEMA_NAME FROM information_schema.SCHEMATA ORDER BY SCHEMA_NAME").WillReturnRows(rows)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/databases", nil)
 	w := httptest.NewRecorder()
@@ -194,10 +194,12 @@ func TestHTTPListTables(t *testing.T) {
 	mock, cleanup := setupHTTPTest(t)
 	defer cleanup()
 
-	rows := sqlmock.NewRows([]string{"Tables_in_testdb"}).
-		AddRow("users").
-		AddRow("orders")
-	mock.ExpectQuery("SHOW TABLES FROM `testdb`").WillReturnRows(rows)
+	rows := sqlmock.NewRows([]string{"TABLE_NAME", "ENGINE", "TABLE_ROWS", "TABLE_COMMENT"}).
+		AddRow("users", "InnoDB", 100, "").
+		AddRow("orders", "InnoDB", 200, "")
+	mock.ExpectQuery(`(?s)SELECT\s+TABLE_NAME\s*,\s*ENGINE\s*,\s*TABLE_ROWS\s*,\s*TABLE_COMMENT\s+FROM\s+information_schema\.TABLES\s+WHERE\s+TABLE_SCHEMA\s*=\s*\?\s+ORDER\s+BY\s+TABLE_NAME`).
+		WithArgs("testdb").
+		WillReturnRows(rows)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/tables?database=testdb", nil)
 	w := httptest.NewRecorder()
@@ -219,10 +221,13 @@ func TestHTTPDescribeTable(t *testing.T) {
 	mock, cleanup := setupHTTPTest(t)
 	defer cleanup()
 
-	rows := sqlmock.NewRows([]string{"Field", "Type", "Collation", "Null", "Key", "Default", "Extra", "Privileges", "Comment"}).
-		AddRow("id", "int", "", "NO", "PRI", "", "auto_increment", "select,insert", "").
-		AddRow("name", "varchar(255)", "utf8mb4_general_ci", "NO", "", "", "", "select,insert", "")
-	mock.ExpectQuery("SHOW FULL COLUMNS FROM `testdb`.`users`").WillReturnRows(rows)
+	rows := sqlmock.NewRows([]string{"COLUMN_NAME", "COLUMN_TYPE", "IS_NULLABLE", "COLUMN_KEY", "COLUMN_DEFAULT", "EXTRA", "COLUMN_COMMENT", "COLLATION_NAME"}).
+		AddRow("id", "int", "NO", "PRI", nil, "auto_increment", "", nil).
+		AddRow("name", "varchar(255)", "NO", "", nil, "", "", "utf8mb4_general_ci")
+
+	mock.ExpectQuery(`(?s)SELECT\s+COLUMN_NAME\s*,\s*COLUMN_TYPE\s*,\s*IS_NULLABLE\s*,\s*COLUMN_KEY\s*,\s*COLUMN_DEFAULT\s*,\s*EXTRA\s*,\s*COLUMN_COMMENT\s*,\s*COLLATION_NAME\s+FROM\s+information_schema\.COLUMNS\s+WHERE\s+TABLE_SCHEMA\s*=\s*\?\s+AND\s+TABLE_NAME\s*=\s*\?\s+ORDER\s+BY\s+ORDINAL_POSITION`).
+		WithArgs("testdb", "users").
+		WillReturnRows(rows)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/describe?database=testdb&table=users", nil)
 	w := httptest.NewRecorder()
@@ -245,11 +250,14 @@ func TestHTTPDescribeTableWithNullCollation(t *testing.T) {
 	defer cleanup()
 
 	// MySQL 8.4+ returns NULL for Collation on non-string columns (int, timestamp, etc.)
-	rows := sqlmock.NewRows([]string{"Field", "Type", "Collation", "Null", "Key", "Default", "Extra", "Privileges", "Comment"}).
-		AddRow("id", "int", nil, "NO", "PRI", nil, "auto_increment", "select,insert", nil).
-		AddRow("created_at", "timestamp", nil, "YES", "", nil, "", "select,insert", nil).
-		AddRow("name", "varchar(255)", "utf8mb4_general_ci", "NO", "", nil, "", "select,insert", "User name")
-	mock.ExpectQuery("SHOW FULL COLUMNS FROM `testdb`.`users`").WillReturnRows(rows)
+	rows := sqlmock.NewRows([]string{"COLUMN_NAME", "COLUMN_TYPE", "IS_NULLABLE", "COLUMN_KEY", "COLUMN_DEFAULT", "EXTRA", "COLUMN_COMMENT", "COLLATION_NAME"}).
+		AddRow("id", "int", "NO", "PRI", nil, "auto_increment", "", nil).
+		AddRow("created_at", "timestamp", "YES", "", nil, "", "", nil).
+		AddRow("name", "varchar(255)", "NO", "", nil, "", "User name", "utf8mb4_general_ci")
+
+	mock.ExpectQuery(`(?s)SELECT\s+COLUMN_NAME\s*,\s*COLUMN_TYPE\s*,\s*IS_NULLABLE\s*,\s*COLUMN_KEY\s*,\s*COLUMN_DEFAULT\s*,\s*EXTRA\s*,\s*COLUMN_COMMENT\s*,\s*COLLATION_NAME\s+FROM\s+information_schema\.COLUMNS\s+WHERE\s+TABLE_SCHEMA\s*=\s*\?\s+AND\s+TABLE_NAME\s*=\s*\?\s+ORDER\s+BY\s+ORDINAL_POSITION`).
+		WithArgs("testdb", "users").
+		WillReturnRows(rows)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/describe?database=testdb&table=users", nil)
 	w := httptest.NewRecorder()
