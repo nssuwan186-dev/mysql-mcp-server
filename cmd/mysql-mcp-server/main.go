@@ -125,7 +125,6 @@ func main() {
 		config.ConfigFilePath = parsed.configPath
 	}
 	silentMode = parsed.silent
-	maybeDaemonize(parsed)
 
 	// Handle immediate actions
 	switch parsed.action {
@@ -151,6 +150,15 @@ func main() {
 	cfg, err = config.Load()
 	if err != nil {
 		log.Fatalf("config error: %v", err)
+	}
+
+	// Daemon mode requires HTTP mode; defer until after config load so we can check.
+	if parsed.daemon {
+		if !cfg.HTTPMode {
+			fmt.Fprintf(os.Stderr, "Error: daemon mode requires HTTP mode (set MYSQL_MCP_HTTP=1 or http.enabled: true in config)\n")
+			os.Exit(1)
+		}
+		maybeDaemonize(parsed)
 	}
 
 	// Set convenience aliases
