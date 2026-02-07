@@ -6,6 +6,8 @@ The format is based on "Keep a Changelog" and this project follows
 Semantic Versioning.
 
 ## [Unreleased]
+
+## [1.6.0.rc1] - 2026-02-07
 ### Added
 - `--silent` / `-s`: suppress INFO and WARN logs (ERROR still printed to stderr). Useful for production or when running under a process manager.
 - `--daemon` / `-d`: run in background (fork and detach; intended for HTTP mode on Unix). On Windows, use a service manager instead.
@@ -21,6 +23,9 @@ Semantic Versioning.
 - Refactored schema discovery tools (`list_databases`, `list_tables`, `describe_table`) to use `information_schema` for better compatibility and performance.
 - Upgraded `list_tables` to include engine type, estimated row count, and comments.
 - Upgraded `describe_table` to return comprehensive column details including collation and comments.
+
+### Fixed
+- Daemon mode now requires HTTP mode: `--daemon` without HTTP enabled exits with a clear error instead of forking an idle stdio process.
 
 ## v1.5.0 - 2026-01-17
 
