@@ -77,6 +77,33 @@ func TestHelpContainsSilentAndDaemon(t *testing.T) {
 	}
 }
 
+// TestDaemonWithoutHTTPExitsWithError ensures that --daemon without HTTP mode exits with
+// a clear error instead of forking an idle stdio process.
+func TestDaemonWithoutHTTPExitsWithError(t *testing.T) {
+	exe := buildServerBinary(t, t.TempDir())
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "no-http.yaml")
+	// Minimal config: one connection, HTTP not enabled (default)
+	cfg := `connections:
+  default:
+    dsn: "user:pass@tcp(127.0.0.1:3306)/"
+`
+	if err := os.WriteFile(cfgPath, []byte(cfg), 0600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	run := exec.Command(exe, "--daemon", "-c", cfgPath)
+	run.Env = append(os.Environ(), "MYSQL_MCP_HTTP=") // ensure HTTP not set by env
+	out, err := run.CombinedOutput()
+	output := string(out)
+	if err == nil {
+		t.Fatalf("expected exit code != 0 when running --daemon without HTTP; output: %s", output)
+	}
+	if !strings.Contains(output, "daemon mode requires HTTP") {
+		t.Errorf("output should explain that daemon requires HTTP; got: %s", output)
+	}
+}
+
 func min(a, b int) int {
 	if a < b {
 		return a

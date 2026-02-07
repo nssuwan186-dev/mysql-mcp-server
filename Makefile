@@ -287,6 +287,14 @@ qa-full: fmt-check vet lint security vuln test coverage
 	@echo "$(GREEN)✅ Full QA pipeline passed!$(RESET)"
 
 # ----------------------------------------
+# GitHub PR (requires gh CLI)
+# ----------------------------------------
+# Merge PR by number; always uses --merge for non-interactive use.
+pr-merge:
+	@if [ -z "$(PR)" ]; then echo "Usage: make pr-merge PR=<number>"; exit 1; fi
+	@gh pr merge $(PR) --merge
+
+# ----------------------------------------
 # Pre-commit Hook
 # ----------------------------------------
 
@@ -355,4 +363,7 @@ help:
 	@echo ""
 	@echo "$(CYAN)Dependencies:$(RESET)"
 	@echo "  make deps         - Download and tidy modules"
+	@echo ""
+	@echo "$(CYAN)GitHub (requires gh):$(RESET)"
+	@echo "  make pr-merge PR=n - Merge pull request n (e.g. make pr-merge PR=91)"
 	@echo ""
