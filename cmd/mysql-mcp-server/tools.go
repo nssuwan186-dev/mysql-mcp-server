@@ -126,6 +126,16 @@ func toolListTables(
 		return nil, ListTablesOutput{}, fmt.Errorf("ListTables rows iteration: %w", err)
 	}
 
+	if len(out.Tables) == 0 {
+		exists, err := schemaExists(ctx, input.Database)
+		if err != nil {
+			return nil, ListTablesOutput{}, err
+		}
+		if !exists {
+			return nil, ListTablesOutput{}, fmt.Errorf("database not found: %s", input.Database)
+		}
+	}
+
 	return nil, out, nil
 }
 
@@ -207,6 +217,24 @@ func toolDescribeTable(
 
 	if err := rows.Err(); err != nil {
 		return nil, DescribeTableOutput{}, fmt.Errorf("row iteration failed: %w", err)
+	}
+
+	if len(out.Columns) == 0 {
+		exists, err := tableExists(ctx, input.Database, input.Table)
+		if err != nil {
+			return nil, DescribeTableOutput{}, err
+		}
+		if !exists {
+			schemaOk, err := schemaExists(ctx, input.Database)
+			if err != nil {
+				return nil, DescribeTableOutput{}, err
+			}
+			if !schemaOk {
+				return nil, DescribeTableOutput{}, fmt.Errorf("database not found: %s", input.Database)
+			}
+			return nil, DescribeTableOutput{}, fmt.Errorf("table not found: %s.%s", input.Database, input.Table)
+		}
+		return nil, DescribeTableOutput{}, fmt.Errorf("no columns found for table: %s.%s", input.Database, input.Table)
 	}
 
 	return nil, out, nil

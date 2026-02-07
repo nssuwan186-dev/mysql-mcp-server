@@ -831,6 +831,8 @@ make test-sakila-84
 make test-sakila-90
 ```
 
+For a multi-version Sakila test matrix (including alternate ports), see `docs/sakila-test-steps.md`.
+
 The Sakila tests cover:
 - Multi-table JOINs (film→actors, customer→address→city→country)
 - Aggregation queries (COUNT, SUM, AVG, GROUP BY)
