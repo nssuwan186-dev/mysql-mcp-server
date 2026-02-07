@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 	"time"
 
@@ -550,9 +551,10 @@ func startHTTPServer(port int, vectorMode bool) {
 			"version":      Version,
 		})
 
-		log.Printf("REST API endpoints available at http://localhost:%d/api", port)
-		log.Printf("Health check at http://localhost:%d/health", port)
-		log.Printf("Press Ctrl+C to stop the server")
+		logInfo("REST API endpoints", map[string]interface{}{
+			"api":    "http://localhost:" + strconv.Itoa(port) + "/api",
+			"health": "http://localhost:" + strconv.Itoa(port) + "/health",
+		})
 
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("HTTP server error: %v", err)
@@ -569,7 +571,7 @@ func startHTTPServer(port int, vectorMode bool) {
 
 	// Attempt graceful shutdown
 	if err := server.Shutdown(ctx); err != nil {
-		log.Printf("Server shutdown error: %v", err)
+		logError("Server shutdown error", map[string]interface{}{"error": err.Error()})
 	} else {
 		logInfo("Server stopped gracefully", nil)
 	}

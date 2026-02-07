@@ -447,6 +447,8 @@ graph TB
     ConfigFile --> Docker
 ```
 
+For running the server as a background service (e.g. under systemd or launchd) with minimal logging, see [Silent and daemon mode](silent-and-daemon.md).
+
 ---
 
 ## Data Flow Summary
@@ -478,4 +480,10 @@ flowchart LR
     Execute --> Format
     Format --> Response
 ```
+
+---
+
+## See also
+
+- [Silent and daemon mode](silent-and-daemon.md) — `--silent`, `--daemon`, and service manager templates (systemd, launchd).
 

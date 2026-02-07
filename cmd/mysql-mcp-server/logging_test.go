@@ -12,6 +12,38 @@ import (
 	"time"
 )
 
+func TestLogInfoSilentMode(t *testing.T) {
+	// When silentMode is true, logInfo and logWarn must not produce output; logError must still output.
+	oldSilent := silentMode
+	defer func() { silentMode = oldSilent }()
+
+	oldStderr := os.Stderr
+	oldLogOutput := log.Writer()
+	r, w, _ := os.Pipe()
+	os.Stderr = w
+	log.SetOutput(w)
+
+	silentMode = true
+	logInfo("should not appear", map[string]interface{}{"key": "value"})
+	logWarn("also should not appear", nil)
+	logError("this must appear", map[string]interface{}{"error": "test"})
+
+	w.Close()
+	os.Stderr = oldStderr
+	log.SetOutput(oldLogOutput)
+
+	var buf bytes.Buffer
+	buf.ReadFrom(r)
+	output := buf.String()
+
+	if strings.Contains(output, "should not appear") || strings.Contains(output, "also should not appear") {
+		t.Error("silent mode: INFO/WARN should be suppressed")
+	}
+	if !strings.Contains(output, "this must appear") && !strings.Contains(output, "ERROR") {
+		t.Error("silent mode: ERROR should still be printed")
+	}
+}
+
 func TestNewQueryTimer(t *testing.T) {
 	timer := NewQueryTimer("test_tool")
 	if timer == nil {
