@@ -81,7 +81,12 @@ func toolListTables(
 	if err != nil {
 		return nil, ListTablesOutput{}, fmt.Errorf("ListTables failed: %w", err)
 	}
-	defer rows.Close()
+	rowsClosed := false
+	defer func() {
+		if !rowsClosed {
+			_ = rows.Close()
+		}
+	}()
 
 	out := ListTablesOutput{Tables: []TableInfo{}}
 	for rows.Next() {
@@ -113,6 +118,12 @@ func toolListTables(
 	}
 
 	if len(out.Tables) == 0 {
+		if !rowsClosed {
+			if err := rows.Close(); err != nil {
+				return nil, ListTablesOutput{}, fmt.Errorf("failed to close rows: %w", err)
+			}
+			rowsClosed = true
+		}
 		exists, err := schemaExists(ctx, input.Database)
 		if err != nil {
 			return nil, ListTablesOutput{}, err

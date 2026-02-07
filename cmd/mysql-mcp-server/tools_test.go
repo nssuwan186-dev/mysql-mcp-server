@@ -174,6 +174,8 @@ func TestToolListTablesEmptySchemaReturnsEmpty(t *testing.T) {
 	mock, cleanup := setupMockDB(t)
 	defer cleanup()
 
+	mock.MatchExpectationsInOrder(false)
+
 	rows := sqlmock.NewRows([]string{"TABLE_NAME", "ENGINE", "TABLE_ROWS", "TABLE_COMMENT"})
 	mock.ExpectQuery(`(?s)SELECT\s+TABLE_NAME\s*,\s*ENGINE\s*,\s*TABLE_ROWS\s*,\s*TABLE_COMMENT\s+FROM\s+information_schema\.TABLES\s+WHERE\s+TABLE_SCHEMA\s*=\s*\?\s+ORDER\s+BY\s+TABLE_NAME`).
 		WithArgs("emptydb").
@@ -183,6 +185,11 @@ func TestToolListTablesEmptySchemaReturnsEmpty(t *testing.T) {
 	mock.ExpectQuery("SELECT 1 FROM information_schema.SCHEMATA WHERE SCHEMA_NAME = \\? LIMIT 1").
 		WithArgs("emptydb").
 		WillReturnRows(schemaRows)
+	// Allow duplicate schema checks if triggered by mock behavior.
+	schemaRowsSecond := sqlmock.NewRows([]string{"1"}).AddRow(1)
+	mock.ExpectQuery("SELECT 1 FROM information_schema.SCHEMATA WHERE SCHEMA_NAME = \\? LIMIT 1").
+		WithArgs("emptydb").
+		WillReturnRows(schemaRowsSecond)
 
 	ctx := context.Background()
 	_, output, err := toolListTables(ctx, &mcp.CallToolRequest{}, ListTablesInput{Database: "emptydb"})
