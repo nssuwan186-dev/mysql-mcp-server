@@ -25,13 +25,22 @@ const (
 	DefaultRateLimitBurst      = 200 // burst size
 )
 
+// SSHConfig holds SSH bastion settings for tunneling (optional).
+type SSHConfig struct {
+	Host    string `json:"ssh_host,omitempty"`
+	User    string `json:"ssh_user,omitempty"`
+	KeyPath string `json:"ssh_key_path,omitempty"`
+	Port    int    `json:"ssh_port,omitempty"` // 0 = default 22
+}
+
 // ConnectionConfig represents a single MySQL connection configuration.
 type ConnectionConfig struct {
-	Name        string `json:"name"`
-	DSN         string `json:"dsn"`
-	Description string `json:"description,omitempty"`
-	ReadOnly    bool   `json:"read_only,omitempty"`
-	SSL         string `json:"ssl,omitempty"` // "true", "false", "skip-verify", or empty (use DSN as-is)
+	Name        string    `json:"name"`
+	DSN         string    `json:"dsn"`
+	Description string    `json:"description,omitempty"`
+	ReadOnly    bool      `json:"read_only,omitempty"`
+	SSL         string    `json:"ssl,omitempty"` // "true", "false", "skip-verify", or empty (use DSN as-is)
+	SSH         *SSHConfig `json:"ssh,omitempty"` // optional SSH tunnel (bastion)
 }
 
 // Config holds all configuration for the MySQL MCP server.
@@ -192,15 +201,21 @@ func loadConnections() ([]ConnectionConfig, error) {
 	// Global SSL setting from MYSQL_SSL (applies to all connections without explicit SSL)
 	globalSSL := os.Getenv("MYSQL_SSL")
 
+	// Global SSH (applies to env-based connections when set)
+	globalSSH := loadGlobalSSHFromEnv()
+
 	// Check for JSON-based configuration first
 	if jsonConfig := os.Getenv("MYSQL_CONNECTIONS"); jsonConfig != "" {
 		if err := json.Unmarshal([]byte(jsonConfig), &configs); err != nil {
 			return nil, fmt.Errorf("failed to parse MYSQL_CONNECTIONS: %w", err)
 		}
-		// Apply global SSL to connections that don't have their own SSL setting
+		// Apply global SSL and SSH to connections that don't have their own
 		for i := range configs {
 			if configs[i].SSL == "" && globalSSL != "" {
 				configs[i].SSL = globalSSL
+			}
+			if configs[i].SSH == nil && globalSSH != nil {
+				configs[i].SSH = globalSSH
 			}
 		}
 		return configs, nil
@@ -210,12 +225,16 @@ func loadConnections() ([]ConnectionConfig, error) {
 	// MYSQL_DSN (default), MYSQL_DSN_1, MYSQL_DSN_2, etc.
 
 	if dsn := os.Getenv("MYSQL_DSN"); dsn != "" {
-		configs = append(configs, ConnectionConfig{
+		c := ConnectionConfig{
 			Name:        "default",
 			DSN:         dsn,
 			Description: "Default connection",
 			SSL:         globalSSL,
-		})
+		}
+		if globalSSH != nil {
+			c.SSH = globalSSH
+		}
+		configs = append(configs, c)
 	}
 
 	for i := 1; i <= 10; i++ {
@@ -240,15 +259,37 @@ func loadConnections() ([]ConnectionConfig, error) {
 			ssl = globalSSL
 		}
 
-		configs = append(configs, ConnectionConfig{
+		c := ConnectionConfig{
 			Name:        name,
 			DSN:         dsn,
 			Description: os.Getenv(descKey),
 			SSL:         ssl,
-		})
+		}
+		if globalSSH != nil {
+			c.SSH = globalSSH
+		}
+		configs = append(configs, c)
 	}
 
 	return configs, nil
+}
+
+// loadGlobalSSHFromEnv loads SSH tunnel settings from MYSQL_SSH_* env vars.
+// Returns nil if SSH is not configured.
+func loadGlobalSSHFromEnv() *SSHConfig {
+	host := strings.TrimSpace(os.Getenv("MYSQL_SSH_HOST"))
+	user := strings.TrimSpace(os.Getenv("MYSQL_SSH_USER"))
+	keyPath := strings.TrimSpace(os.Getenv("MYSQL_SSH_KEY_PATH"))
+	if host == "" || user == "" || keyPath == "" {
+		return nil
+	}
+	port := 0
+	if v := os.Getenv("MYSQL_SSH_PORT"); v != "" {
+		if p, err := strconv.Atoi(strings.TrimSpace(v)); err == nil && p > 0 {
+			port = p
+		}
+	}
+	return &SSHConfig{Host: host, User: user, KeyPath: keyPath, Port: port}
 }
 
 // getEnvInt reads an integer from an environment variable with a default value.

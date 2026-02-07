@@ -140,6 +140,39 @@ connections:
     ssl: "true"
 ```
 
+### SSH Tunneling (Bastion Host)
+
+Connect to MySQL through an SSH bastion when the database is not directly reachable:
+
+| Variable | Description |
+|----------|-------------|
+| `MYSQL_SSH_HOST` | Bastion hostname |
+| `MYSQL_SSH_USER` | SSH username |
+| `MYSQL_SSH_KEY_PATH` | Path to private key file |
+| `MYSQL_SSH_PORT` | SSH port (default 22) |
+
+**Environment variables:**
+
+```bash
+export MYSQL_SSH_HOST="bastion.example.com"
+export MYSQL_SSH_USER="deploy"
+export MYSQL_SSH_KEY_PATH="$HOME/.ssh/id_rsa"
+export MYSQL_DSN="user:pass@tcp(mysql.internal:3306)/mydb?parseTime=true"
+```
+
+**Config file:**
+
+```yaml
+connections:
+  production:
+    dsn: "user:pass@tcp(mysql.internal:3306)/mydb?parseTime=true"
+    ssh:
+      host: "bastion.example.com"
+      user: "deploy"
+      key_path: "~/.ssh/id_rsa"
+      port: 22  # optional, default 22
+```
+
 ### Multi-DSN Configuration
 
 Configure multiple MySQL connections using numbered environment variables:
