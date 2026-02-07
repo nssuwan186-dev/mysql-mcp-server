@@ -7,6 +7,7 @@ Semantic Versioning.
 
 ## [Unreleased]
 ### Added
+- SSH tunneling (bastion host) support: connect to MySQL via `ssh_host`, `ssh_user`, `ssh_key_path`, and optional `ssh_port` (config file or `MYSQL_SSH_*` env vars).
 - Native support for MariaDB 10.x and 11.x.
 - Automatic server type detection (`mysql` vs `mariadb`) in `server_info` tool.
 - MariaDB 11.4 integration test target in `Makefile` and `docker-compose.test.yml`.
