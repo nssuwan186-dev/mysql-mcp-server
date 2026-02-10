@@ -6,6 +6,9 @@ The format is based on "Keep a Changelog" and this project follows
 Semantic Versioning.
 
 ## [Unreleased]
+
+## v1.6.0 - 2026-02-10
+
 ### Added
 - Native support for MariaDB 10.x and 11.x.
 - Automatic server type detection (`mysql` vs `mariadb`) in `server_info` tool.
