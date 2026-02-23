@@ -49,7 +49,7 @@ type DescribeTableOutput struct {
 }
 
 type RunQueryInput struct {
-	SQL      string `json:"sql" jsonschema:"SQL query to execute; must start with SELECT, SHOW, DESCRIBE, or EXPLAIN"`
+	SQL      string `json:"sql" jsonschema:"SQL query to execute; must start with SELECT, SHOW, DESCRIBE, or EXPLAIN. Apply MySQL optimization guidelines before execution."`
 	MaxRows  *int   `json:"max_rows,omitempty" jsonschema:"optional row limit overriding the default max rows"`
 	Database string `json:"database,omitempty" jsonschema:"optional database name to USE before running the query"`
 }
