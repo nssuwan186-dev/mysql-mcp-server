@@ -120,6 +120,18 @@ test-integration-mariadb-11:
 		docker compose -f docker-compose.test.yml stop mariadb11; \
 		exit $$TEST_EXIT
 
+# SSH tunnel integration test (issue #79): requires mysql80 + ssh_bastion
+test-integration-ssh:
+	@echo "$(BLUE)🔐 Running SSH tunnel integration test...$(RESET)"
+	@docker compose -f docker-compose.test.yml up -d --wait --wait-timeout 90 mysql80 ssh_bastion
+	@MYSQL_SSH_HOST=localhost MYSQL_SSH_PORT=2222 MYSQL_SSH_USER=root \
+		MYSQL_SSH_KEY_PATH="$$(pwd)/tests/integration/fixtures/ssh_test_key" \
+		MYSQL_SSH_TEST_DSN="root:testpass@tcp(mysql80:3306)/testdb?parseTime=true" \
+		go test -tags=integration -v -run TestSSHTunnel ./tests/integration/...; \
+		TEST_EXIT=$$?; \
+		docker compose -f docker-compose.test.yml stop ssh_bastion mysql80; \
+		exit $$TEST_EXIT
+
 # Sakila database integration tests
 test-sakila: test-mysql-up
 	@echo "$(BLUE)🎬 Running Sakila database integration tests...$(RESET)"
@@ -275,6 +287,14 @@ qa-full: fmt-check vet lint security vuln test coverage
 	@echo "$(GREEN)✅ Full QA pipeline passed!$(RESET)"
 
 # ----------------------------------------
+# GitHub PR (requires gh CLI)
+# ----------------------------------------
+# Merge PR by number; always uses --merge for non-interactive use.
+pr-merge:
+	@if [ -z "$(PR)" ]; then echo "Usage: make pr-merge PR=<number>"; exit 1; fi
+	@gh pr merge $(PR) --merge
+
+# ----------------------------------------
 # Pre-commit Hook
 # ----------------------------------------
 
@@ -308,7 +328,8 @@ help:
 	@echo "  make test-security     - Run security/validator tests"
 	@echo "  make integration       - Run basic integration tests"
 	@echo "  make test-integration  - Run full integration suite (Docker Compose)"
-	@echo "  make test-integration-80  - Test against MySQL 8.0"
+	@echo "  make test-integration-80   - Test against MySQL 8.0"
+	@echo "  make test-integration-ssh  - Test SSH tunnel (mysql80 + ssh_bastion)"
 	@echo "  make test-integration-84  - Test against MySQL 8.4"
 	@echo "  make test-integration-90  - Test against MySQL 9.0"
 	@echo "  make test-integration-all - Test against all MySQL versions"
@@ -342,4 +363,7 @@ help:
 	@echo ""
 	@echo "$(CYAN)Dependencies:$(RESET)"
 	@echo "  make deps         - Download and tidy modules"
+	@echo ""
+	@echo "$(CYAN)GitHub (requires gh):$(RESET)"
+	@echo "  make pr-merge PR=n - Merge pull request n (e.g. make pr-merge PR=91)"
 	@echo ""

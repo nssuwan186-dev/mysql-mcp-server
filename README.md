@@ -3,7 +3,7 @@
 <div align="center">
   <img src="./MysqlMCPServerBanner.png" alt="MySQL MCP Server Banner" width="800"/>
   
-  [![Version](https://img.shields.io/badge/version-1.5.0-blue.svg)](https://github.com/askdba/mysql-mcp-server/releases)
+  [![Version](https://img.shields.io/badge/version-1.6.0-blue.svg)](https://github.com/askdba/mysql-mcp-server/releases)
   [![Go](https://img.shields.io/badge/go-1.24+-00ADD8.svg)](https://golang.org/)
   [![License](https://img.shields.io/badge/license-Apache--2.0-green.svg)](LICENSE)
 </div>
@@ -146,6 +146,39 @@ connections:
     ssl: "true"
 ```
 
+### SSH Tunneling (Bastion Host)
+
+Connect to MySQL through an SSH bastion when the database is not directly reachable:
+
+| Variable | Description |
+|----------|-------------|
+| `MYSQL_SSH_HOST` | Bastion hostname |
+| `MYSQL_SSH_USER` | SSH username |
+| `MYSQL_SSH_KEY_PATH` | Path to private key file |
+| `MYSQL_SSH_PORT` | SSH port (default 22) |
+
+**Environment variables:**
+
+```bash
+export MYSQL_SSH_HOST="bastion.example.com"
+export MYSQL_SSH_USER="deploy"
+export MYSQL_SSH_KEY_PATH="$HOME/.ssh/id_rsa"
+export MYSQL_DSN="user:pass@tcp(mysql.internal:3306)/mydb?parseTime=true"
+```
+
+**Config file:**
+
+```yaml
+connections:
+  production:
+    dsn: "user:pass@tcp(mysql.internal:3306)/mydb?parseTime=true"
+    ssh:
+      host: "bastion.example.com"
+      user: "deploy"
+      key_path: "~/.ssh/id_rsa"
+      port: 22  # optional, default 22
+```
+
 ### Multi-DSN Configuration
 
 Configure multiple MySQL connections using numbered environment variables:
@@ -231,7 +264,15 @@ mysql-mcp-server --validate-config /path/to/config.yaml
 
 # Print current configuration as YAML
 mysql-mcp-server --print-config
+
+# Silent mode: suppress INFO/WARN logs (only errors to stderr)
+mysql-mcp-server --silent --config /path/to/config.yaml
+
+# Daemon mode: run HTTP server in background (Unix; use with MYSQL_MCP_HTTP=1)
+MYSQL_MCP_HTTP=1 mysql-mcp-server --daemon --config /path/to/config.yaml
 ```
+
+**Silent and daemon mode:** Use `-s` / `--silent` to reduce log noise in production (INFO and WARN are suppressed; ERROR still goes to stderr). Use `-d` / `--daemon` to run the HTTP server detached in the background on Unix. For long-running services, use the example [systemd unit](contrib/systemd/mysql-mcp-server.service) or [launchd plist](contrib/launchd/com.askdba.mysql-mcp-server.plist). See [Silent and daemon mode](docs/silent-and-daemon.md) for details.
 
 **Priority:** Environment variables override config file values, allowing:
 - Base configuration in file
@@ -264,7 +305,7 @@ mysql-mcp-server --version
 
 Output:
 ```
-mysql-mcp-server v1.5.0
+mysql-mcp-server v1.6.0
   Build time: 2025-12-21T11:43:11Z
   Git commit: a1b2c3d
 ```
@@ -1037,6 +1078,17 @@ export MYSQL_HTTP_RATE_LIMIT_BURST=200  # Allow bursts up to 200
 ```
 
 When rate limited, clients receive HTTP 429 (Too Many Requests) with a `Retry-After: 1` header.
+
+### Running as a service (daemon)
+
+To run the REST API server in the background or under a process manager:
+
+- **Unix (foreground detach):** `MYSQL_MCP_HTTP=1 mysql-mcp-server --daemon --config /path/to/config.yaml` (forks and exits the parent; child runs detached).
+- **systemd:** Copy and customize [contrib/systemd/mysql-mcp-server.service](contrib/systemd/mysql-mcp-server.service), then `systemctl enable --now mysql-mcp-server`.
+- **macOS launchd:** Copy and customize [contrib/launchd/com.askdba.mysql-mcp-server.plist](contrib/launchd/com.askdba.mysql-mcp-server.plist) into `~/Library/LaunchAgents/` or `/Library/LaunchDaemons/`.
+- **Windows:** Use a Windows Service wrapper or run in a terminal; `--daemon` is not supported.
+
+Use `--silent` to suppress INFO/WARN logs when running under a service manager. See [docs/silent-and-daemon.md](docs/silent-and-daemon.md).
 
 ### API Endpoints
 

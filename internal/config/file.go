@@ -37,10 +37,19 @@ type FileConfig struct {
 
 // FileConnectionConfig represents a connection in the config file.
 type FileConnectionConfig struct {
-	DSN         string `yaml:"dsn" json:"dsn"`
-	Description string `yaml:"description" json:"description"`
-	ReadOnly    bool   `yaml:"read_only" json:"read_only"`
-	SSL         string `yaml:"ssl" json:"ssl"` // "true", "false", "skip-verify", or empty
+	DSN         string      `yaml:"dsn" json:"dsn"`
+	Description string      `yaml:"description" json:"description"`
+	ReadOnly    bool        `yaml:"read_only" json:"read_only"`
+	SSL         string      `yaml:"ssl" json:"ssl"`   // "true", "false", "skip-verify", or empty
+	SSH         *FileSSHConfig `yaml:"ssh" json:"ssh"` // optional SSH tunnel (bastion)
+}
+
+// FileSSHConfig represents SSH tunnel settings in the config file.
+type FileSSHConfig struct {
+	Host    string `yaml:"host" json:"host"`
+	User    string `yaml:"user" json:"user"`
+	KeyPath string `yaml:"key_path" json:"key_path"`
+	Port    int    `yaml:"port" json:"port"` // 0 = default 22
 }
 
 // FileQueryConfig represents query settings in the config file.
@@ -296,13 +305,22 @@ func (fc *FileConfig) ToConfig() *Config {
 
 	for _, name := range names {
 		conn := fc.Connections[name]
-		cfg.Connections = append(cfg.Connections, ConnectionConfig{
+		cc := ConnectionConfig{
 			Name:        name,
 			DSN:         conn.DSN,
 			Description: conn.Description,
 			ReadOnly:    conn.ReadOnly,
 			SSL:         conn.SSL,
-		})
+		}
+		if conn.SSH != nil && (conn.SSH.Host != "" || conn.SSH.User != "" || conn.SSH.KeyPath != "") {
+			cc.SSH = &SSHConfig{
+				Host:    conn.SSH.Host,
+				User:    conn.SSH.User,
+				KeyPath: conn.SSH.KeyPath,
+				Port:    conn.SSH.Port,
+			}
+		}
+		cfg.Connections = append(cfg.Connections, cc)
 	}
 
 	return cfg
@@ -346,12 +364,21 @@ func PrintConfig(cfg *Config) string {
 	}
 
 	for _, conn := range cfg.Connections {
-		fc.Connections[conn.Name] = FileConnectionConfig{
+		fcc := FileConnectionConfig{
 			DSN:         maskDSN(conn.DSN),
 			Description: conn.Description,
 			ReadOnly:    conn.ReadOnly,
 			SSL:         conn.SSL,
 		}
+		if conn.SSH != nil {
+			fcc.SSH = &FileSSHConfig{
+				Host:    conn.SSH.Host,
+				User:    conn.SSH.User,
+				KeyPath: conn.SSH.KeyPath,
+				Port:    conn.SSH.Port,
+			}
+		}
+		fc.Connections[conn.Name] = fcc
 	}
 
 	data, _ := yaml.Marshal(fc)
