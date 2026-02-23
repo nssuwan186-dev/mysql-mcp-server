@@ -7,6 +7,9 @@ Semantic Versioning.
 
 ## [Unreleased]
 
+### Added
+- Comprehensive MySQL Query Optimization Guide (`docs/mysql_query_optimization_comprehensive.md`) detailing optimizer statistics, advanced indexing, query plan analysis, and operational best practices (#92).
+
 ## v1.6.0 - 2026-02-10
 
 ### Added
