@@ -10,6 +10,9 @@ Semantic Versioning.
 ### Added
 - Comprehensive MySQL Query Optimization Guide (`docs/mysql_query_optimization_comprehensive.md`) detailing optimizer statistics, advanced indexing, query plan analysis, and operational best practices (#92).
 
+### Fixed
+- MariaDB job result missing from QA pipeline summary output in GitHub Actions (#92).
+
 ## v1.6.0 - 2026-02-10
 
 ### Added

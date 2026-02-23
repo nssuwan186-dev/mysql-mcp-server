@@ -398,6 +398,7 @@ jobs:
           echo "Security: ${{ needs.security.result }}"
           echo "Unit Tests: ${{ needs.unit-tests.result }}"
           echo "Integration Tests: ${{ needs.integration-tests.result }}"
+          echo "MariaDB Tests: ${{ needs.integration-tests-mariadb.result }}"
           echo "Build: ${{ needs.build.result }}"
           echo "Docker: ${{ needs.docker.result }}"
           echo "API Tests: ${{ needs.api-tests.result }}"
