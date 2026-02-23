@@ -38,6 +38,12 @@ This project exposes safe MySQL introspection tools to Claude Desktop via MCP. C
 brew install askdba/tap/mysql-mcp-server
 ```
 
+**Update local installation** (after a new release):
+
+```bash
+brew update && brew upgrade mysql-mcp-server
+```
+
 ### Docker
 
 ```bash
@@ -1180,6 +1186,11 @@ docker run -p 9306:9306 \
   ghcr.io/askdba/mysql-mcp-server:latest
 ```
 
+## Documentation
+
+- **[SQL Query Optimization Guide](docs/query_optimization_guide.md)**: Practical optimization patterns and query rewriting techniques using the Stack Exchange schema.
+- **[Comprehensive MySQL Query Optimization Guide](docs/mysql_query_optimization_comprehensive.md)**: Deep technical insights into the query optimizer, advanced indexing strategies, execution plan analysis, and operational best practices.
+
 ## Project Structure
 
 ```
@@ -1235,20 +1246,9 @@ make release   # Build release binaries
 
 ## Releasing
 
-Releases are automated via GitHub Actions and GoReleaser.
+Releases are automated via GitHub Actions and GoReleaser. Full checklist: **[docs/releasing.md](docs/releasing.md)**.
 
-To create a new release:
-
-```bash
-git tag v1.0.0
-git push origin v1.0.0
-```
-
-This will automatically:
-1. Build binaries for macOS, Linux, and Windows
-2. Create a GitHub Release with changelog
-3. Push Docker image to `ghcr.io/askdba/mysql-mcp-server`
-4. Update Homebrew formula (if configured)
+Quick steps: update [CHANGELOG.md](CHANGELOG.md), commit, then `git tag vX.Y.Z` and `git push origin vX.Y.Z`. After the workflow runs, complete post-release steps (CHANGELOG on main if needed, Homebrew tap README, local `brew upgrade`). See the doc for details.
 
 ## License
 

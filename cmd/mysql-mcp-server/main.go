@@ -291,7 +291,7 @@ func registerCoreTools(server *mcp.Server) {
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "run_query",
-		Description: "Execute a read-only SQL query (SELECT/SHOW/DESCRIBE/EXPLAIN only)",
+		Description: "Execute a read-only SQL query (SELECT/SHOW/DESCRIBE/EXPLAIN only). For complex queries, you MUST apply MySQL Query Optimization guidelines (e.g., filter early, use indexed columns without functions, use EXPLAIN) before executing.",
 	}, toolRunQueryWrapped)
 
 	mcp.AddTool(server, &mcp.Tool{
