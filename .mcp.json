@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "mysql": {
+      "command": "mysql-mcp-server",
+      "env": {
+        "MYSQL_DSN": "${MYSQL_DSN}",
+        "MYSQL_MCP_EXTENDED": "1"
+      }
+    }
+  }
+}

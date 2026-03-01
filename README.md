@@ -74,17 +74,32 @@ Binary output: `bin/mysql-mcp-server`
 
 ## Quickstart
 
-Run the interactive setup script:
+### Option A: Homebrew (macOS/Linux)
+
+```bash
+brew install askdba/tap/mysql-mcp-server
+mysql-mcp-server --version
+```
+
+Then follow the client-specific setup in the [Claude Desktop](#claude-desktop-integration), [Claude Code](#claude-code-integration), or [Cursor IDE](#cursor-ide-integration) sections below.
+
+> **Tip:** `brew info askdba/tap/mysql-mcp-server` shows a config reminder after install.
+
+### Option B: Build from Source
+
+```bash
+git clone https://github.com/askdba/mysql-mcp-server.git
+cd mysql-mcp-server
+make build
+```
+
+When running from a cloned repo you can also use the interactive setup script:
 
 ```bash
 ./scripts/quickstart.sh
 ```
 
-This will:
-1. Test your MySQL connection
-2. Optionally create a read-only MCP user
-3. Generate your Claude Desktop configuration
-4. Optionally load a test dataset
+This will test your MySQL connection, optionally create a read-only MCP user, and generate your Claude Desktop configuration.
 
 ## Configuration
 
@@ -335,15 +350,18 @@ Add:
 {
   "mcpServers": {
     "mysql": {
-      "command": "/absolute/path/to/bin/mysql-mcp-server",
+      "command": "mysql-mcp-server",
       "env": {
-        "MYSQL_DSN": "root:password@tcp(127.0.0.1:3306)/mysql?parseTime=true",
-        "MYSQL_MAX_ROWS": "200"
+        "MYSQL_DSN": "user:password@tcp(127.0.0.1:3306)/mydb?parseTime=true",
+        "MYSQL_MAX_ROWS": "200",
+        "MYSQL_MCP_EXTENDED": "1"
       }
     }
   }
 }
 ```
+
+> **Note:** If Claude Desktop cannot find the binary, replace `"mysql-mcp-server"` with the full path from `which mysql-mcp-server`.
 
 Restart Claude Desktop.
 
@@ -404,6 +422,32 @@ Add:
 ```
 
 Restart Cursor after saving the configuration.
+
+## Claude Code Integration
+
+Claude Code supports MCP servers via the CLI or a project-scoped `.mcp.json` file.
+
+### Option 1: CLI (quick setup)
+
+```bash
+claude mcp add --transport stdio \
+  --env MYSQL_DSN="user:password@tcp(127.0.0.1:3306)/mydb?parseTime=true" \
+  --env MYSQL_MCP_EXTENDED=1 \
+  mysql -- mysql-mcp-server
+```
+
+### Option 2: Project `.mcp.json`
+
+This repo includes a `.mcp.json` that Claude Code auto-discovers when you open the project. Set your DSN in the shell before starting Claude Code:
+
+```bash
+export MYSQL_DSN="user:password@tcp(127.0.0.1:3306)/mydb?parseTime=true"
+claude  # start Claude Code — MySQL tools will be available automatically
+```
+
+To use the same config in your own project, copy `.mcp.json` to your project root and set `MYSQL_DSN` in your shell.
+
+**Verify the integration** by asking Claude Code: *"List all databases on this MySQL server."*
 
 ## MCP Tools
 
