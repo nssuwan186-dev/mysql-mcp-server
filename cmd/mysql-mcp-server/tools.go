@@ -374,7 +374,7 @@ func toolRunQuery(
 
 	out := QueryResult{
 		Columns: make([]string, 0),
-		Rows:    make([][]interface{}, 0),
+		Rows:    make([][]interface{}, 0, limit),
 	}
 
 	columns, err := rows.Columns()

@@ -119,7 +119,7 @@ func (c *Client) RunQuery(ctx context.Context, sqlText string, maxRows int) ([]m
 		return nil, err
 	}
 
-	var result []map[string]any
+	result := make([]map[string]any, 0, maxRows)
 	count := 0
 	for rows.Next() {
 		if count >= maxRows {
