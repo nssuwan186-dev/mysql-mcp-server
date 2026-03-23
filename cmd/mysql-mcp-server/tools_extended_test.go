@@ -3,6 +3,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -658,11 +659,12 @@ func TestToolListStatusSuccess(t *testing.T) {
 	mock, cleanup := setupExtendedMockDB(t)
 	defer cleanup()
 
-	rows := sqlmock.NewRows([]string{"Variable_name", "Value"}).
+	rows := sqlmock.NewRows([]string{"VARIABLE_NAME", "VARIABLE_VALUE"}).
 		AddRow("Uptime", "12345").
 		AddRow("Threads_connected", "5")
 
-	mock.ExpectQuery("SHOW GLOBAL STATUS").WillReturnRows(rows)
+	mock.ExpectQuery("SELECT VARIABLE_NAME, VARIABLE_VALUE FROM performance_schema.global_status ORDER BY VARIABLE_NAME").
+		WillReturnRows(rows)
 
 	ctx := context.Background()
 	_, output, err := toolListStatus(ctx, &mcp.CallToolRequest{}, ListStatusInput{})
@@ -684,11 +686,13 @@ func TestToolListStatusWithPattern(t *testing.T) {
 	mock, cleanup := setupExtendedMockDB(t)
 	defer cleanup()
 
-	rows := sqlmock.NewRows([]string{"Variable_name", "Value"}).
+	rows := sqlmock.NewRows([]string{"VARIABLE_NAME", "VARIABLE_VALUE"}).
 		AddRow("Threads_connected", "5").
 		AddRow("Threads_running", "2")
 
-	mock.ExpectQuery("SHOW GLOBAL STATUS LIKE").WillReturnRows(rows)
+	mock.ExpectQuery("SELECT VARIABLE_NAME, VARIABLE_VALUE FROM performance_schema.global_status WHERE VARIABLE_NAME LIKE .* ORDER BY VARIABLE_NAME").
+		WithArgs("Threads%").
+		WillReturnRows(rows)
 
 	ctx := context.Background()
 	_, output, err := toolListStatus(ctx, &mcp.CallToolRequest{}, ListStatusInput{
@@ -708,17 +712,80 @@ func TestToolListStatusWithPattern(t *testing.T) {
 	}
 }
 
+func TestToolListStatusFallback(t *testing.T) {
+	mock, cleanup := setupExtendedMockDB(t)
+	defer cleanup()
+
+	// Primary performance_schema query fails
+	mock.ExpectQuery("SELECT VARIABLE_NAME, VARIABLE_VALUE FROM performance_schema.global_status ORDER BY VARIABLE_NAME").
+		WillReturnError(fmt.Errorf("Table 'performance_schema.global_status' doesn't exist"))
+
+	// Fallback SHOW GLOBAL STATUS succeeds
+	rows := sqlmock.NewRows([]string{"Variable_name", "Value"}).
+		AddRow("Uptime", "12345").
+		AddRow("Threads_connected", "5")
+	mock.ExpectQuery("SHOW GLOBAL STATUS").WillReturnRows(rows)
+
+	ctx := context.Background()
+	_, output, err := toolListStatus(ctx, &mcp.CallToolRequest{}, ListStatusInput{})
+
+	if err != nil {
+		t.Fatalf("toolListStatus fallback failed: %v", err)
+	}
+
+	if len(output.Variables) != 2 {
+		t.Errorf("expected 2 variables, got %d", len(output.Variables))
+	}
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Errorf("unfulfilled expectations: %v", err)
+	}
+}
+
+func TestToolListStatusFallbackWithPattern(t *testing.T) {
+	mock, cleanup := setupExtendedMockDB(t)
+	defer cleanup()
+
+	// Primary performance_schema query fails
+	mock.ExpectQuery("SELECT VARIABLE_NAME, VARIABLE_VALUE FROM performance_schema.global_status WHERE VARIABLE_NAME LIKE .* ORDER BY VARIABLE_NAME").
+		WillReturnError(fmt.Errorf("Table 'performance_schema.global_status' doesn't exist"))
+
+	// Fallback SHOW GLOBAL STATUS LIKE succeeds
+	rows := sqlmock.NewRows([]string{"Variable_name", "Value"}).
+		AddRow("Threads_connected", "5").
+		AddRow("Threads_running", "2")
+	mock.ExpectQuery("SHOW GLOBAL STATUS LIKE").WithArgs("Threads%").WillReturnRows(rows)
+
+	ctx := context.Background()
+	_, output, err := toolListStatus(ctx, &mcp.CallToolRequest{}, ListStatusInput{
+		Pattern: "Threads%",
+	})
+
+	if err != nil {
+		t.Fatalf("toolListStatus fallback with pattern failed: %v", err)
+	}
+
+	if len(output.Variables) != 2 {
+		t.Errorf("expected 2 variables, got %d", len(output.Variables))
+	}
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Errorf("unfulfilled expectations: %v", err)
+	}
+}
+
 // ===== toolListVariables Tests =====
 
 func TestToolListVariablesSuccess(t *testing.T) {
 	mock, cleanup := setupExtendedMockDB(t)
 	defer cleanup()
 
-	rows := sqlmock.NewRows([]string{"Variable_name", "Value"}).
+	rows := sqlmock.NewRows([]string{"VARIABLE_NAME", "VARIABLE_VALUE"}).
 		AddRow("max_connections", "151").
 		AddRow("innodb_buffer_pool_size", "134217728")
 
-	mock.ExpectQuery("SHOW GLOBAL VARIABLES").WillReturnRows(rows)
+	mock.ExpectQuery("SELECT VARIABLE_NAME, VARIABLE_VALUE FROM performance_schema.global_variables ORDER BY VARIABLE_NAME").
+		WillReturnRows(rows)
 
 	ctx := context.Background()
 	_, output, err := toolListVariables(ctx, &mcp.CallToolRequest{}, ListVariablesInput{})
@@ -740,11 +807,13 @@ func TestToolListVariablesWithPattern(t *testing.T) {
 	mock, cleanup := setupExtendedMockDB(t)
 	defer cleanup()
 
-	rows := sqlmock.NewRows([]string{"Variable_name", "Value"}).
-		AddRow("innodb_buffer_pool_size", "134217728").
-		AddRow("innodb_buffer_pool_instances", "1")
+	rows := sqlmock.NewRows([]string{"VARIABLE_NAME", "VARIABLE_VALUE"}).
+		AddRow("innodb_buffer_pool_instances", "1").
+		AddRow("innodb_buffer_pool_size", "134217728")
 
-	mock.ExpectQuery("SHOW GLOBAL VARIABLES LIKE").WillReturnRows(rows)
+	mock.ExpectQuery("SELECT VARIABLE_NAME, VARIABLE_VALUE FROM performance_schema.global_variables WHERE VARIABLE_NAME LIKE .* ORDER BY VARIABLE_NAME").
+		WithArgs("innodb_buffer%").
+		WillReturnRows(rows)
 
 	ctx := context.Background()
 	_, output, err := toolListVariables(ctx, &mcp.CallToolRequest{}, ListVariablesInput{
@@ -753,6 +822,68 @@ func TestToolListVariablesWithPattern(t *testing.T) {
 
 	if err != nil {
 		t.Fatalf("toolListVariables failed: %v", err)
+	}
+
+	if len(output.Variables) != 2 {
+		t.Errorf("expected 2 variables, got %d", len(output.Variables))
+	}
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Errorf("unfulfilled expectations: %v", err)
+	}
+}
+
+func TestToolListVariablesFallback(t *testing.T) {
+	mock, cleanup := setupExtendedMockDB(t)
+	defer cleanup()
+
+	// Primary performance_schema query fails
+	mock.ExpectQuery("SELECT VARIABLE_NAME, VARIABLE_VALUE FROM performance_schema.global_variables ORDER BY VARIABLE_NAME").
+		WillReturnError(fmt.Errorf("Table 'performance_schema.global_variables' doesn't exist"))
+
+	// Fallback SHOW GLOBAL VARIABLES succeeds
+	rows := sqlmock.NewRows([]string{"Variable_name", "Value"}).
+		AddRow("max_connections", "151").
+		AddRow("innodb_buffer_pool_size", "134217728")
+	mock.ExpectQuery("SHOW GLOBAL VARIABLES").WillReturnRows(rows)
+
+	ctx := context.Background()
+	_, output, err := toolListVariables(ctx, &mcp.CallToolRequest{}, ListVariablesInput{})
+
+	if err != nil {
+		t.Fatalf("toolListVariables fallback failed: %v", err)
+	}
+
+	if len(output.Variables) != 2 {
+		t.Errorf("expected 2 variables, got %d", len(output.Variables))
+	}
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Errorf("unfulfilled expectations: %v", err)
+	}
+}
+
+func TestToolListVariablesFallbackWithPattern(t *testing.T) {
+	mock, cleanup := setupExtendedMockDB(t)
+	defer cleanup()
+
+	// Primary performance_schema query fails
+	mock.ExpectQuery("SELECT VARIABLE_NAME, VARIABLE_VALUE FROM performance_schema.global_variables WHERE VARIABLE_NAME LIKE .* ORDER BY VARIABLE_NAME").
+		WillReturnError(fmt.Errorf("Table 'performance_schema.global_variables' doesn't exist"))
+
+	// Fallback SHOW GLOBAL VARIABLES LIKE succeeds
+	rows := sqlmock.NewRows([]string{"Variable_name", "Value"}).
+		AddRow("innodb_buffer_pool_instances", "1").
+		AddRow("innodb_buffer_pool_size", "134217728")
+	mock.ExpectQuery("SHOW GLOBAL VARIABLES LIKE").WithArgs("innodb_buffer%").WillReturnRows(rows)
+
+	ctx := context.Background()
+	_, output, err := toolListVariables(ctx, &mcp.CallToolRequest{}, ListVariablesInput{
+		Pattern: "innodb_buffer%",
+	})
+
+	if err != nil {
+		t.Fatalf("toolListVariables fallback with pattern failed: %v", err)
 	}
 
 	if len(output.Variables) != 2 {
