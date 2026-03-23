@@ -908,3 +908,135 @@ func TestToolServerInfoFallback(t *testing.T) {
 		t.Errorf("unfulfilled expectations: %v", err)
 	}
 }
+
+// ===== Tests for performance improvement features =====
+
+func TestToolRunQueryTruncatedFlag(t *testing.T) {
+	mock, cleanup := setupMockDB(t)
+	defer cleanup()
+
+	// Set a small maxRows so truncation is triggered
+	oldMaxRows := maxRows
+	maxRows = 2
+	defer func() { maxRows = oldMaxRows }()
+
+	// Return 5 rows but only read 2
+	rows := sqlmock.NewRows([]string{"id"}).
+		AddRow(1).
+		AddRow(2).
+		AddRow(3).
+		AddRow(4).
+		AddRow(5)
+
+	// With LIMIT injection, the query will have LIMIT 2 appended
+	mock.ExpectQuery("SELECT id FROM t LIMIT 2").WillReturnRows(rows)
+
+	ctx := context.Background()
+	_, output, err := toolRunQuery(ctx, &mcp.CallToolRequest{}, RunQueryInput{
+		SQL: "SELECT id FROM t",
+	})
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(output.Rows) != 2 {
+		t.Errorf("expected 2 rows, got %d", len(output.Rows))
+	}
+
+	if !output.Truncated {
+		t.Error("expected Truncated=true when row limit was hit")
+	}
+}
+
+func TestToolRunQueryNotTruncated(t *testing.T) {
+	mock, cleanup := setupMockDB(t)
+	defer cleanup()
+
+	rows := sqlmock.NewRows([]string{"id"}).
+		AddRow(1).
+		AddRow(2)
+
+	mock.ExpectQuery("SELECT id FROM t LIMIT 1000").WillReturnRows(rows)
+
+	ctx := context.Background()
+	_, output, err := toolRunQuery(ctx, &mcp.CallToolRequest{}, RunQueryInput{
+		SQL: "SELECT id FROM t",
+	})
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(output.Rows) != 2 {
+		t.Errorf("expected 2 rows, got %d", len(output.Rows))
+	}
+
+	if output.Truncated {
+		t.Error("expected Truncated=false when all rows were returned")
+	}
+}
+
+func TestToolRunQuerySelectStarWarning(t *testing.T) {
+	mock, cleanup := setupMockDB(t)
+	defer cleanup()
+
+	rows := sqlmock.NewRows([]string{"id", "name"}).AddRow(1, "Alice")
+	mock.ExpectQuery("SELECT \\* FROM users LIMIT 1000").WillReturnRows(rows)
+
+	ctx := context.Background()
+	_, output, err := toolRunQuery(ctx, &mcp.CallToolRequest{}, RunQueryInput{
+		SQL: "SELECT * FROM users",
+	})
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if output.Warning == "" {
+		t.Error("expected a warning when SELECT * is used")
+	}
+}
+
+func TestToolRunQueryNoWarningForSpecificColumns(t *testing.T) {
+	mock, cleanup := setupMockDB(t)
+	defer cleanup()
+
+	rows := sqlmock.NewRows([]string{"id", "name"}).AddRow(1, "Alice")
+	mock.ExpectQuery("SELECT id, name FROM users LIMIT 1000").WillReturnRows(rows)
+
+	ctx := context.Background()
+	_, output, err := toolRunQuery(ctx, &mcp.CallToolRequest{}, RunQueryInput{
+		SQL: "SELECT id, name FROM users",
+	})
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if output.Warning != "" {
+		t.Errorf("expected no warning for specific column selection, got: %q", output.Warning)
+	}
+}
+
+func TestToolRunQueryLimitNotInjectedWhenPresent(t *testing.T) {
+	mock, cleanup := setupMockDB(t)
+	defer cleanup()
+
+	rows := sqlmock.NewRows([]string{"id"}).AddRow(1).AddRow(2)
+	// Query already has LIMIT 5 - should not get another LIMIT appended
+	mock.ExpectQuery("SELECT id FROM t LIMIT 5").WillReturnRows(rows)
+
+	ctx := context.Background()
+	_, output, err := toolRunQuery(ctx, &mcp.CallToolRequest{}, RunQueryInput{
+		SQL: "SELECT id FROM t LIMIT 5",
+	})
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(output.Rows) != 2 {
+		t.Errorf("expected 2 rows, got %d", len(output.Rows))
+	}
+}

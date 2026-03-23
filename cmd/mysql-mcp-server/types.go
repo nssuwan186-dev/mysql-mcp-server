@@ -55,8 +55,10 @@ type RunQueryInput struct {
 }
 
 type QueryResult struct {
-	Columns []string        `json:"columns" jsonschema:"column names"`
-	Rows    [][]interface{} `json:"rows" jsonschema:"rows of values"`
+	Columns   []string        `json:"columns" jsonschema:"column names"`
+	Rows      [][]interface{} `json:"rows" jsonschema:"rows of values"`
+	Truncated bool            `json:"truncated,omitempty" jsonschema:"true if the result was capped at the row limit"`
+	Warning   string          `json:"warning,omitempty" jsonschema:"performance or usage warning, if any"`
 }
 
 type PingInput struct{}

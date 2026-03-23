@@ -329,6 +329,15 @@ func toolRunQuery(
 		limit = *input.MaxRows
 	}
 
+	// Detect SELECT * before rewriting so we can surface a warning.
+	hasStar := util.HasSelectStar(sqlText)
+
+	// Inject a server-side LIMIT so MySQL stops processing early.
+	// This is a best-effort optimization; we still enforce the row cap on
+	// the client side below to guard against non-SELECT statements where
+	// InjectLimit is a no-op.
+	sqlText = util.InjectLimit(sqlText, limit)
+
 	ctx, cancel := context.WithTimeout(ctx, queryTimeout)
 	defer cancel()
 
@@ -414,6 +423,7 @@ func toolRunQuery(
 				return nil, QueryResult{}, fmt.Errorf("failed to close rows: %w", err)
 			}
 			rowsClosed = true
+			out.Truncated = true
 			break
 		}
 	}
@@ -428,6 +438,12 @@ func toolRunQuery(
 			return nil, QueryResult{}, fmt.Errorf("failed to close rows: %w", err)
 		}
 		rowsClosed = true
+	}
+
+	// Attach a warning when SELECT * was used so the AI can adjust future queries.
+	if hasStar {
+		out.Warning = "SELECT * retrieves all columns, which increases payload size. " +
+			"Specify only the columns you need for better performance."
 	}
 
 	// Token estimation for output (optional)

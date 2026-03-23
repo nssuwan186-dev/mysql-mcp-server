@@ -12,7 +12,9 @@ func clearEnv() {
 		"MYSQL_CONNECTIONS",
 		"MYSQL_MAX_ROWS",
 		"MYSQL_QUERY_TIMEOUT_SECONDS",
+		"MYSQL_QUERY_TIMEOUT",
 		"MYSQL_MAX_OPEN_CONNS",
+		"MYSQL_POOL_SIZE",
 		"MYSQL_MAX_IDLE_CONNS",
 		"MYSQL_CONN_MAX_LIFETIME_MINUTES",
 		"MYSQL_CONN_MAX_IDLE_TIME_MINUTES",
@@ -387,5 +389,73 @@ func TestLoadNumberedDSNsWithGlobalSSL(t *testing.T) {
 	// server1 should use its own SSL setting
 	if cfg.Connections[1].SSL != "true" {
 		t.Errorf("expected SSL 'true' for server1, got '%s'", cfg.Connections[1].SSL)
+	}
+}
+
+func TestMySQLPoolSizeAlias(t *testing.T) {
+	clearEnv()
+
+	os.Setenv("MYSQL_DSN", "user:pass@tcp(localhost:3306)/db")
+	os.Setenv("MYSQL_POOL_SIZE", "15")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load returned error: %v", err)
+	}
+
+	if cfg.MaxOpenConns != 15 {
+		t.Fatalf("expected MaxOpenConns=15 from MYSQL_POOL_SIZE, got %d", cfg.MaxOpenConns)
+	}
+}
+
+func TestMySQLMaxOpenConnsTakesPrecedenceOverPoolSize(t *testing.T) {
+	clearEnv()
+
+	os.Setenv("MYSQL_DSN", "user:pass@tcp(localhost:3306)/db")
+	os.Setenv("MYSQL_POOL_SIZE", "15")
+	os.Setenv("MYSQL_MAX_OPEN_CONNS", "25")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load returned error: %v", err)
+	}
+
+	// MYSQL_MAX_OPEN_CONNS must take precedence over MYSQL_POOL_SIZE
+	if cfg.MaxOpenConns != 25 {
+		t.Fatalf("expected MaxOpenConns=25 (MYSQL_MAX_OPEN_CONNS wins), got %d", cfg.MaxOpenConns)
+	}
+}
+
+func TestMySQLQueryTimeoutMsAlias(t *testing.T) {
+	clearEnv()
+
+	os.Setenv("MYSQL_DSN", "user:pass@tcp(localhost:3306)/db")
+	os.Setenv("MYSQL_QUERY_TIMEOUT", "45000") // 45 000 ms = 45 s
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load returned error: %v", err)
+	}
+
+	if cfg.QueryTimeout != 45*time.Second {
+		t.Fatalf("expected QueryTimeout=45s from MYSQL_QUERY_TIMEOUT=45000, got %v", cfg.QueryTimeout)
+	}
+}
+
+func TestMySQLQueryTimeoutSecondsTakesPrecedenceOverMs(t *testing.T) {
+	clearEnv()
+
+	os.Setenv("MYSQL_DSN", "user:pass@tcp(localhost:3306)/db")
+	os.Setenv("MYSQL_QUERY_TIMEOUT", "45000")      // 45 s in ms
+	os.Setenv("MYSQL_QUERY_TIMEOUT_SECONDS", "60") // 60 s in seconds
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load returned error: %v", err)
+	}
+
+	// MYSQL_QUERY_TIMEOUT_SECONDS must take precedence
+	if cfg.QueryTimeout != 60*time.Second {
+		t.Fatalf("expected QueryTimeout=60s (MYSQL_QUERY_TIMEOUT_SECONDS wins), got %v", cfg.QueryTimeout)
 	}
 }
