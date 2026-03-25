@@ -103,41 +103,7 @@ func TestIntegration_MySQLClient_BasicFlow(t *testing.T) {
 		t.Fatalf("failed to insert data: %v", err)
 	}
 
-	// 1) ListDatabases
-	dbs, err := client.ListDatabases(ctx)
-	if err != nil {
-		t.Fatalf("ListDatabases error: %v", err)
-	}
-	if len(dbs) == 0 {
-		t.Fatalf("expected at least one database, got 0")
-	}
-
-	// 2) ListTables
-	tables, err := client.ListTables(ctx, "testdb")
-	if err != nil {
-		t.Fatalf("ListTables error: %v", err)
-	}
-	foundUsers := false
-	for _, tname := range tables {
-		if tname == "users" {
-			foundUsers = true
-			break
-		}
-	}
-	if !foundUsers {
-		t.Fatalf("expected to find 'users' table, got: %v", tables)
-	}
-
-	// 3) DescribeTable
-	cols, err := client.DescribeTable(ctx, "testdb", "users")
-	if err != nil {
-		t.Fatalf("DescribeTable error: %v", err)
-	}
-	if len(cols) == 0 {
-		t.Fatalf("expected at least one column in users table")
-	}
-
-	// 4) RunQuery
+	// RunQuery
 	rows, err := client.RunQuery(ctx, "SELECT id, name FROM users ORDER BY id", 10)
 	if err != nil {
 		t.Fatalf("RunQuery error: %v", err)

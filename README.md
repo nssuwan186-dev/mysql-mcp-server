@@ -3,7 +3,7 @@
 <div align="center">
   <img src="./MysqlMCPServerBanner.png" alt="MySQL MCP Server Banner" width="800"/>
   
-  [![Version](https://img.shields.io/badge/version-1.4.0-blue.svg)](https://github.com/askdba/mysql-mcp-server/releases)
+  [![Version](https://img.shields.io/badge/version-1.6.0-blue.svg)](https://github.com/askdba/mysql-mcp-server/releases)
   [![Go](https://img.shields.io/badge/go-1.24+-00ADD8.svg)](https://golang.org/)
   [![License](https://img.shields.io/badge/license-Apache--2.0-green.svg)](LICENSE)
 </div>
@@ -15,7 +15,8 @@ This project exposes safe MySQL introspection tools to Claude Desktop via MCP. C
 ## Features
 
 - Fully read-only (blocks all non-SELECT/SHOW/DESCRIBE/EXPLAIN)
-- **Multi-DSN Support**: Connect to multiple MySQL instances, switch via tool
+- **Multi-DSN Support**: Connect to multiple MySQL or MariaDB instances, switch via tool
+- **MariaDB Support**: Native compatibility with MariaDB 10.x and 11.x
 - **Vector Search** (MySQL 9.0+): Similarity search on vector columns
 - MCP tools:
   - list_databases, list_tables, describe_table
@@ -23,7 +24,7 @@ This project exposes safe MySQL introspection tools to Claude Desktop via MCP. C
   - ping, server_info
   - list_connections, use_connection (multi-DSN)
   - vector_search, vector_info (MySQL 9.0+)
-- Supports MySQL 8.0, 8.4, 9.0+
+- Supports MySQL 8.0, 8.4, 9.0+ and MariaDB 10.x, 11.x
 - Query timeouts, structured logging, audit logs
 - Single Go binary
 - Unit and integration tests (Testcontainers)
@@ -37,11 +38,20 @@ This project exposes safe MySQL introspection tools to Claude Desktop via MCP. C
 brew install askdba/tap/mysql-mcp-server
 ```
 
+**Update local installation** (after a new release):
+
+```bash
+brew update && brew upgrade mysql-mcp-server
+```
+
 ### Docker
 
 ```bash
 docker pull ghcr.io/askdba/mysql-mcp-server:latest
 ```
+
+> Note: Docker image tags use the raw version number without a leading "v"
+> (e.g., `1.5.0`, not `v1.5.0`).
 
 ### Download Binary
 
@@ -64,17 +74,32 @@ Binary output: `bin/mysql-mcp-server`
 
 ## Quickstart
 
-Run the interactive setup script:
+### Option A: Homebrew (macOS/Linux)
+
+```bash
+brew install askdba/tap/mysql-mcp-server
+mysql-mcp-server --version
+```
+
+Then follow the client-specific setup in the [Claude Desktop](#claude-desktop-integration), [Claude Code](#claude-code-integration), or [Cursor IDE](#cursor-ide-integration) sections below.
+
+> **Tip:** `brew info askdba/tap/mysql-mcp-server` shows a config reminder after install.
+
+### Option B: Build from Source
+
+```bash
+git clone https://github.com/askdba/mysql-mcp-server.git
+cd mysql-mcp-server
+make build
+```
+
+When running from a cloned repo you can also use the interactive setup script:
 
 ```bash
 ./scripts/quickstart.sh
 ```
 
-This will:
-1. Test your MySQL connection
-2. Optionally create a read-only MCP user
-3. Generate your Claude Desktop configuration
-4. Optionally load a test dataset
+This will test your MySQL connection, optionally create a read-only MCP user, and generate your Claude Desktop configuration.
 
 ## Configuration
 
@@ -113,7 +138,9 @@ Enable encrypted connections to MySQL servers:
 | `true` | Enable TLS with certificate verification |
 | `false` | Disable TLS (default) |
 | `skip-verify` | Enable TLS without certificate verification (self-signed certs) |
-| `preferred` | Use TLS if available, fall back to unencrypted |
+| `preferred` | Maps to `skip-verify` (Go MySQL driver limitation) |
+
+> **Note:** The Go MySQL driver doesn't support `tls=preferred`. When you specify `preferred`, it is automatically mapped to `skip-verify` to ensure TLS is enabled.
 
 **Environment variable:**
 
@@ -132,6 +159,39 @@ connections:
   production:
     dsn: "user:pass@tcp(prod:3306)/db?parseTime=true"
     ssl: "true"
+```
+
+### SSH Tunneling (Bastion Host)
+
+Connect to MySQL through an SSH bastion when the database is not directly reachable:
+
+| Variable | Description |
+|----------|-------------|
+| `MYSQL_SSH_HOST` | Bastion hostname |
+| `MYSQL_SSH_USER` | SSH username |
+| `MYSQL_SSH_KEY_PATH` | Path to private key file |
+| `MYSQL_SSH_PORT` | SSH port (default 22) |
+
+**Environment variables:**
+
+```bash
+export MYSQL_SSH_HOST="bastion.example.com"
+export MYSQL_SSH_USER="deploy"
+export MYSQL_SSH_KEY_PATH="$HOME/.ssh/id_rsa"
+export MYSQL_DSN="user:pass@tcp(mysql.internal:3306)/mydb?parseTime=true"
+```
+
+**Config file:**
+
+```yaml
+connections:
+  production:
+    dsn: "user:pass@tcp(mysql.internal:3306)/mydb?parseTime=true"
+    ssh:
+      host: "bastion.example.com"
+      user: "deploy"
+      key_path: "~/.ssh/id_rsa"
+      port: 22  # optional, default 22
 ```
 
 ### Multi-DSN Configuration
@@ -219,7 +279,15 @@ mysql-mcp-server --validate-config /path/to/config.yaml
 
 # Print current configuration as YAML
 mysql-mcp-server --print-config
+
+# Silent mode: suppress INFO/WARN logs (only errors to stderr)
+mysql-mcp-server --silent --config /path/to/config.yaml
+
+# Daemon mode: run HTTP server in background (Unix; use with MYSQL_MCP_HTTP=1)
+MYSQL_MCP_HTTP=1 mysql-mcp-server --daemon --config /path/to/config.yaml
 ```
+
+**Silent and daemon mode:** Use `-s` / `--silent` to reduce log noise in production (INFO and WARN are suppressed; ERROR still goes to stderr). Use `-d` / `--daemon` to run the HTTP server detached in the background on Unix. For long-running services, use the example [systemd unit](contrib/systemd/mysql-mcp-server.service) or [launchd plist](contrib/launchd/com.askdba.mysql-mcp-server.plist). See [Silent and daemon mode](docs/silent-and-daemon.md) for details.
 
 **Priority:** Environment variables override config file values, allowing:
 - Base configuration in file
@@ -252,7 +320,7 @@ mysql-mcp-server --version
 
 Output:
 ```
-mysql-mcp-server v1.4.0
+mysql-mcp-server v1.6.0
   Build time: 2025-12-21T11:43:11Z
   Git commit: a1b2c3d
 ```
@@ -282,15 +350,18 @@ Add:
 {
   "mcpServers": {
     "mysql": {
-      "command": "/absolute/path/to/bin/mysql-mcp-server",
+      "command": "mysql-mcp-server",
       "env": {
-        "MYSQL_DSN": "root:password@tcp(127.0.0.1:3306)/mysql?parseTime=true",
-        "MYSQL_MAX_ROWS": "200"
+        "MYSQL_DSN": "user:password@tcp(127.0.0.1:3306)/mydb?parseTime=true",
+        "MYSQL_MAX_ROWS": "200",
+        "MYSQL_MCP_EXTENDED": "1"
       }
     }
   }
 }
 ```
+
+> **Note:** If Claude Desktop cannot find the binary, replace `"mysql-mcp-server"` with the full path from `which mysql-mcp-server`.
 
 Restart Claude Desktop.
 
@@ -351,6 +422,32 @@ Add:
 ```
 
 Restart Cursor after saving the configuration.
+
+## Claude Code Integration
+
+Claude Code supports MCP servers via the CLI or a project-scoped `.mcp.json` file.
+
+### Option 1: CLI (quick setup)
+
+```bash
+claude mcp add --transport stdio \
+  --env MYSQL_DSN="user:password@tcp(127.0.0.1:3306)/mydb?parseTime=true" \
+  --env MYSQL_MCP_EXTENDED=1 \
+  mysql -- mysql-mcp-server
+```
+
+### Option 2: Project `.mcp.json`
+
+This repo includes a `.mcp.json` that Claude Code auto-discovers when you open the project. Set your DSN in the shell before starting Claude Code:
+
+```bash
+export MYSQL_DSN="user:password@tcp(127.0.0.1:3306)/mydb?parseTime=true"
+claude  # start Claude Code — MySQL tools will be available automatically
+```
+
+To use the same config in your own project, copy `.mcp.json` to your project root and set `MYSQL_DSN` in your shell.
+
+**Verify the integration** by asking Claude Code: *"List all databases on this MySQL server."*
 
 ## MCP Tools
 
@@ -792,10 +889,16 @@ make test-integration-84
 make test-integration-90
 ```
 
-**Test against all MySQL versions:**
+**Test against all supported versions (MySQL & MariaDB):**
 
 ```bash
 make test-integration-all
+```
+
+**Test specifically against MariaDB 11.4:**
+
+```bash
+make test-integration-mariadb-11
 ```
 
 ### Sakila Database Tests
@@ -818,6 +921,8 @@ make test-sakila-84
 # Against MySQL 9.0
 make test-sakila-90
 ```
+
+For a multi-version Sakila test matrix (including alternate ports), see `docs/sakila-test-steps.md`.
 
 The Sakila tests cover:
 - Multi-table JOINs (film→actors, customer→address→city→country)
@@ -1018,6 +1123,17 @@ export MYSQL_HTTP_RATE_LIMIT_BURST=200  # Allow bursts up to 200
 
 When rate limited, clients receive HTTP 429 (Too Many Requests) with a `Retry-After: 1` header.
 
+### Running as a service (daemon)
+
+To run the REST API server in the background or under a process manager:
+
+- **Unix (foreground detach):** `MYSQL_MCP_HTTP=1 mysql-mcp-server --daemon --config /path/to/config.yaml` (forks and exits the parent; child runs detached).
+- **systemd:** Copy and customize [contrib/systemd/mysql-mcp-server.service](contrib/systemd/mysql-mcp-server.service), then `systemctl enable --now mysql-mcp-server`.
+- **macOS launchd:** Copy and customize [contrib/launchd/com.askdba.mysql-mcp-server.plist](contrib/launchd/com.askdba.mysql-mcp-server.plist) into `~/Library/LaunchAgents/` or `/Library/LaunchDaemons/`.
+- **Windows:** Use a Windows Service wrapper or run in a terminal; `--daemon` is not supported.
+
+Use `--silent` to suppress INFO/WARN logs when running under a service manager. See [docs/silent-and-daemon.md](docs/silent-and-daemon.md).
+
 ### API Endpoints
 
 | Method | Endpoint | Description |
@@ -1114,6 +1230,11 @@ docker run -p 9306:9306 \
   ghcr.io/askdba/mysql-mcp-server:latest
 ```
 
+## Documentation
+
+- **[SQL Query Optimization Guide](docs/query_optimization_guide.md)**: Practical optimization patterns and query rewriting techniques using the Stack Exchange schema.
+- **[Comprehensive MySQL Query Optimization Guide](docs/mysql_query_optimization_comprehensive.md)**: Deep technical insights into the query optimizer, advanced indexing strategies, execution plan analysis, and operational best practices.
+
 ## Project Structure
 
 ```
@@ -1169,20 +1290,9 @@ make release   # Build release binaries
 
 ## Releasing
 
-Releases are automated via GitHub Actions and GoReleaser.
+Releases are automated via GitHub Actions and GoReleaser. Full checklist: **[docs/releasing.md](docs/releasing.md)**.
 
-To create a new release:
-
-```bash
-git tag v1.0.0
-git push origin v1.0.0
-```
-
-This will automatically:
-1. Build binaries for macOS, Linux, and Windows
-2. Create a GitHub Release with changelog
-3. Push Docker image to `ghcr.io/askdba/mysql-mcp-server`
-4. Update Homebrew formula (if configured)
+Quick steps: update [CHANGELOG.md](CHANGELOG.md), commit, then `git tag vX.Y.Z` and `git push origin vX.Y.Z`. After the workflow runs, complete post-release steps (CHANGELOG on main if needed, Homebrew tap README, local `brew upgrade`). See the doc for details.
 
 ## License
 

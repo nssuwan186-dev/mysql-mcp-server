@@ -5,28 +5,44 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
+	"github.com/go-sql-driver/mysql"
 	"github.com/askdba/mysql-mcp-server/internal/config"
+	"github.com/askdba/mysql-mcp-server/internal/sshtunnel"
 	"github.com/askdba/mysql-mcp-server/internal/util"
+)
+
+// ServerType represents the type of the database server.
+type ServerType string
+
+const (
+	ServerTypeMySQL   ServerType = "mysql"
+	ServerTypeMariaDB ServerType = "mariadb"
+	ServerTypeUnknown ServerType = "unknown"
 )
 
 // ===== Multi-DSN Connection Manager =====
 
 // ConnectionManager manages multiple MySQL connections.
 type ConnectionManager struct {
-	connections map[string]*sql.DB
-	configs     map[string]config.ConnectionConfig
-	activeConn  string
-	mu          sync.RWMutex
+	connections   map[string]*sql.DB
+	configs       map[string]config.ConnectionConfig
+	serverTypes   map[string]ServerType
+	activeConn    string
+	tunnelClosers map[string]func() // per-connection SSH tunnel close functions
+	mu            sync.RWMutex
 }
 
 // NewConnectionManager creates a new connection manager.
 func NewConnectionManager() *ConnectionManager {
 	return &ConnectionManager{
-		connections: make(map[string]*sql.DB),
-		configs:     make(map[string]config.ConnectionConfig),
+		connections:   make(map[string]*sql.DB),
+		configs:       make(map[string]config.ConnectionConfig),
+		serverTypes:   make(map[string]ServerType),
+		tunnelClosers: make(map[string]func()),
 	}
 }
 
@@ -35,11 +51,39 @@ func (cm *ConnectionManager) AddConnectionWithPoolConfig(connCfg config.Connecti
 	cm.mu.Lock()
 	defer cm.mu.Unlock()
 
-	// Apply SSL/TLS settings to DSN if configured
 	dsn := config.ApplySSLToDSN(connCfg.DSN, connCfg.SSL)
+
+	// If SSH tunnel is configured, start tunnel and rewrite DSN to use local listener
+	if connCfg.SSH != nil && connCfg.SSH.Host != "" && connCfg.SSH.User != "" && connCfg.SSH.KeyPath != "" {
+		mysqlCfg, err := mysql.ParseDSN(dsn)
+		if err != nil {
+			return fmt.Errorf("failed to parse DSN for SSH tunnel %s: %w", connCfg.Name, err)
+		}
+		remoteAddr := mysqlCfg.Addr
+		if remoteAddr == "" {
+			remoteAddr = "127.0.0.1:3306"
+		}
+		tunnelCfg := sshtunnel.Config{
+			Host:    connCfg.SSH.Host,
+			User:    connCfg.SSH.User,
+			KeyPath: connCfg.SSH.KeyPath,
+			Port:    connCfg.SSH.Port,
+		}
+		localAddr, closeTunnel, err := sshtunnel.Tunnel(tunnelCfg, remoteAddr)
+		if err != nil {
+			return fmt.Errorf("failed to start SSH tunnel for %s: %w", connCfg.Name, err)
+		}
+		cm.tunnelClosers[connCfg.Name] = closeTunnel
+		mysqlCfg.Addr = localAddr
+		dsn = mysqlCfg.FormatDSN()
+	}
 
 	conn, err := sql.Open("mysql", dsn)
 	if err != nil {
+		if closer := cm.tunnelClosers[connCfg.Name]; closer != nil {
+			closer()
+			delete(cm.tunnelClosers, connCfg.Name)
+		}
 		return fmt.Errorf("failed to open connection %s: %w", connCfg.Name, err)
 	}
 
@@ -80,6 +124,11 @@ func (cm *ConnectionManager) AddConnectionWithPoolConfig(connCfg config.Connecti
 
 	cm.connections[connCfg.Name] = conn
 	cm.configs[connCfg.Name] = connCfg
+
+	// Detect server type with a dedicated context to avoid sharing timeout with PingContext
+	ctxDetect, cancelDetect := context.WithTimeout(context.Background(), pingTimeout)
+	defer cancelDetect()
+	cm.serverTypes[connCfg.Name] = cm.detectServerType(ctxDetect, conn)
 
 	// Set as active if it's the first connection
 	if cm.activeConn == "" {
@@ -130,13 +179,17 @@ func (cm *ConnectionManager) GetActiveDB() *sql.DB {
 	return cm.connections[cm.activeConn]
 }
 
-// Close closes all connections managed by the manager.
+// Close closes all connections and SSH tunnels managed by the manager.
 func (cm *ConnectionManager) Close() {
 	cm.mu.Lock()
 	defer cm.mu.Unlock()
 	for _, conn := range cm.connections {
 		conn.Close()
 	}
+	for _, closeFn := range cm.tunnelClosers {
+		closeFn()
+	}
+	cm.tunnelClosers = make(map[string]func())
 }
 
 // getDB returns the active database connection in a thread-safe manner.
@@ -147,4 +200,50 @@ func getDB() *sql.DB {
 		panic("getDB called before connManager initialized")
 	}
 	return connManager.GetActiveDB()
+}
+
+// GetServerType returns the server type of the active connection.
+func (cm *ConnectionManager) GetServerType() ServerType {
+	cm.mu.RLock()
+	defer cm.mu.RUnlock()
+	if st, exists := cm.serverTypes[cm.activeConn]; exists {
+		return st
+	}
+	return ServerTypeUnknown
+}
+
+// detectServerType queries the server to determine if it's MySQL or MariaDB.
+func (cm *ConnectionManager) detectServerType(ctx context.Context, db *sql.DB) ServerType {
+	var version, versionComment string
+	// Try VERSION() and @@version_comment first
+	err := db.QueryRowContext(ctx, "SELECT VERSION(), @@version_comment").Scan(&version, &versionComment)
+	if err != nil {
+		// Fallback to just VERSION() if the combined query fails
+		err = db.QueryRowContext(ctx, "SELECT VERSION()").Scan(&version)
+		if err != nil {
+			return ServerTypeUnknown
+		}
+	}
+
+	version = strings.TrimSpace(strings.ToLower(version))
+	versionComment = strings.TrimSpace(strings.ToLower(versionComment))
+
+	// If we got nothing back, we can't reliably identify the server
+	if version == "" && versionComment == "" {
+		return ServerTypeUnknown
+	}
+
+	if strings.Contains(version, "mariadb") || strings.Contains(versionComment, "mariadb") {
+		return ServerTypeMariaDB
+	}
+
+	return ServerTypeMySQL
+}
+
+// getServerType is a helper to get the active server type.
+func getServerType() ServerType {
+	if connManager == nil {
+		return ServerTypeUnknown
+	}
+	return connManager.GetServerType()
 }

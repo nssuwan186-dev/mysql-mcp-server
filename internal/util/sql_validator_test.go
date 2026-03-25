@@ -64,6 +64,12 @@ func TestValidateSQL(t *testing.T) {
 		{"into dumpfile", "SELECT * FROM users INTO DUMPFILE '/tmp/test.bin'", true},
 		{"load data", "LOAD DATA INFILE '/tmp/test.csv' INTO TABLE users", true},
 
+		// Invalid queries - System schema access
+		{"mysql.user access", "SELECT * FROM mysql.user", true},
+		{"information_schema access", "SELECT * FROM information_schema.tables", true},
+		{"performance_schema access", "SELECT * FROM performance_schema.events_statements_summary_by_digest", true},
+		{"sys schema access", "SELECT * FROM sys.session", true},
+
 		// Invalid queries - Multi-statement
 		{"multi-statement", "SELECT 1; DROP TABLE users", true},
 		{"multi with comment", "SELECT 1; -- DROP TABLE users", true},

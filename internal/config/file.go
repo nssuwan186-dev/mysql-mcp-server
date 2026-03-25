@@ -37,10 +37,19 @@ type FileConfig struct {
 
 // FileConnectionConfig represents a connection in the config file.
 type FileConnectionConfig struct {
-	DSN         string `yaml:"dsn" json:"dsn"`
-	Description string `yaml:"description" json:"description"`
-	ReadOnly    bool   `yaml:"read_only" json:"read_only"`
-	SSL         string `yaml:"ssl" json:"ssl"` // "true", "false", "skip-verify", or empty
+	DSN         string      `yaml:"dsn" json:"dsn"`
+	Description string      `yaml:"description" json:"description"`
+	ReadOnly    bool        `yaml:"read_only" json:"read_only"`
+	SSL         string      `yaml:"ssl" json:"ssl"`   // "true", "false", "skip-verify", or empty
+	SSH         *FileSSHConfig `yaml:"ssh" json:"ssh"` // optional SSH tunnel (bastion)
+}
+
+// FileSSHConfig represents SSH tunnel settings in the config file.
+type FileSSHConfig struct {
+	Host    string `yaml:"host" json:"host"`
+	User    string `yaml:"user" json:"user"`
+	KeyPath string `yaml:"key_path" json:"key_path"`
+	Port    int    `yaml:"port" json:"port"` // 0 = default 22
 }
 
 // FileQueryConfig represents query settings in the config file.
@@ -77,14 +86,14 @@ type FileHTTPConfig struct {
 	Enabled               bool                `yaml:"enabled" json:"enabled"`
 	Port                  int                 `yaml:"port" json:"port"`
 	RequestTimeoutSeconds int                 `yaml:"request_timeout_seconds" json:"request_timeout_seconds"`
-	RateLimit             FileRateLimitConfig `yaml:"rate_limit" json:"rate_limit"`
+	RateLimit             *FileRateLimitConfig `yaml:"rate_limit" json:"rate_limit"`
 }
 
 // FileRateLimitConfig represents rate limiting settings in the config file.
 type FileRateLimitConfig struct {
-	Enabled bool `yaml:"enabled" json:"enabled"`
-	RPS     int  `yaml:"rps" json:"rps"`
-	Burst   int  `yaml:"burst" json:"burst"`
+	Enabled *bool    `yaml:"enabled" json:"enabled"`
+	RPS     *float64 `yaml:"rps" json:"rps"`
+	Burst   *int     `yaml:"burst" json:"burst"`
 }
 
 // ConfigFilePath holds the path to the config file (set by command line flag).
@@ -265,12 +274,17 @@ func (fc *FileConfig) ToConfig() *Config {
 		cfg.HTTPRequestTimeout = secondsToDuration(fc.HTTP.RequestTimeoutSeconds)
 	}
 
-	cfg.RateLimitEnabled = fc.HTTP.RateLimit.Enabled
-	if fc.HTTP.RateLimit.RPS > 0 {
-		cfg.RateLimitRPS = float64(fc.HTTP.RateLimit.RPS)
-	}
-	if fc.HTTP.RateLimit.Burst > 0 {
-		cfg.RateLimitBurst = fc.HTTP.RateLimit.Burst
+	// Only apply rate limit settings from file if the section is present.
+	if fc.HTTP.RateLimit != nil {
+		if fc.HTTP.RateLimit.Enabled != nil {
+			cfg.RateLimitEnabled = *fc.HTTP.RateLimit.Enabled
+		}
+		if fc.HTTP.RateLimit.RPS != nil {
+			cfg.RateLimitRPS = *fc.HTTP.RateLimit.RPS
+		}
+		if fc.HTTP.RateLimit.Burst != nil {
+			cfg.RateLimitBurst = *fc.HTTP.RateLimit.Burst
+		}
 	}
 
 	// Convert connections - sort keys for deterministic ordering
@@ -291,13 +305,22 @@ func (fc *FileConfig) ToConfig() *Config {
 
 	for _, name := range names {
 		conn := fc.Connections[name]
-		cfg.Connections = append(cfg.Connections, ConnectionConfig{
+		cc := ConnectionConfig{
 			Name:        name,
 			DSN:         conn.DSN,
 			Description: conn.Description,
 			ReadOnly:    conn.ReadOnly,
 			SSL:         conn.SSL,
-		})
+		}
+		if conn.SSH != nil && (conn.SSH.Host != "" || conn.SSH.User != "" || conn.SSH.KeyPath != "") {
+			cc.SSH = &SSHConfig{
+				Host:    conn.SSH.Host,
+				User:    conn.SSH.User,
+				KeyPath: conn.SSH.KeyPath,
+				Port:    conn.SSH.Port,
+			}
+		}
+		cfg.Connections = append(cfg.Connections, cc)
 	}
 
 	return cfg
@@ -332,21 +355,30 @@ func PrintConfig(cfg *Config) string {
 			Enabled:               cfg.HTTPMode,
 			Port:                  cfg.HTTPPort,
 			RequestTimeoutSeconds: int(cfg.HTTPRequestTimeout.Seconds()),
-			RateLimit: FileRateLimitConfig{
-				Enabled: cfg.RateLimitEnabled,
-				RPS:     int(cfg.RateLimitRPS),
-				Burst:   cfg.RateLimitBurst,
+			RateLimit: &FileRateLimitConfig{
+				Enabled: &cfg.RateLimitEnabled,
+				RPS:     &cfg.RateLimitRPS,
+				Burst:   &cfg.RateLimitBurst,
 			},
 		},
 	}
 
 	for _, conn := range cfg.Connections {
-		fc.Connections[conn.Name] = FileConnectionConfig{
+		fcc := FileConnectionConfig{
 			DSN:         maskDSN(conn.DSN),
 			Description: conn.Description,
 			ReadOnly:    conn.ReadOnly,
 			SSL:         conn.SSL,
 		}
+		if conn.SSH != nil {
+			fcc.SSH = &FileSSHConfig{
+				Host:    conn.SSH.Host,
+				User:    conn.SSH.User,
+				KeyPath: conn.SSH.KeyPath,
+				Port:    conn.SSH.Port,
+			}
+		}
+		fc.Connections[conn.Name] = fcc
 	}
 
 	data, _ := yaml.Marshal(fc)
@@ -371,8 +403,12 @@ func maskDSN(dsn string) string {
 // SSL values:
 //   - "true" or "1": Enable TLS with certificate verification (tls=true)
 //   - "skip-verify": Enable TLS without certificate verification (tls=skip-verify)
+//   - "preferred": Maps to skip-verify (Go MySQL driver doesn't support tls=preferred)
 //   - "false", "0", or "": No change to DSN (use DSN as-is)
-//   - "preferred": Use TLS if available, fall back to unencrypted (tls=preferred)
+//
+// Note: The go-sql-driver/mysql only supports tls=true, tls=false, tls=skip-verify,
+// or a custom TLS config name. The "preferred" option from MySQL client is not supported,
+// so we map it to "skip-verify" as the closest equivalent behavior.
 //
 // If the DSN already contains a tls= parameter, it is not modified.
 func ApplySSLToDSN(dsn, ssl string) string {
@@ -393,6 +429,7 @@ func ApplySSLToDSN(dsn, ssl string) string {
 	}
 
 	// Determine the tls parameter value
+	// Note: go-sql-driver/mysql only supports: true, false, skip-verify, or custom config name
 	var tlsValue string
 	switch ssl {
 	case "true", "1":
@@ -400,7 +437,9 @@ func ApplySSLToDSN(dsn, ssl string) string {
 	case "skip-verify":
 		tlsValue = "skip-verify"
 	case "preferred":
-		tlsValue = "preferred"
+		// "preferred" is not supported by go-sql-driver/mysql
+		// Map to "skip-verify" as the closest equivalent (TLS without cert verification)
+		tlsValue = "skip-verify"
 	default:
 		// Unknown value, treat as true for safety
 		tlsValue = "true"

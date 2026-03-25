@@ -4,6 +4,7 @@ package main
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"testing"
 	"time"
 
@@ -67,11 +68,11 @@ func TestToolListDatabases(t *testing.T) {
 	defer cleanup()
 
 	// Set up expected query
-	rows := sqlmock.NewRows([]string{"Database"}).
+	rows := sqlmock.NewRows([]string{"schema_name"}).
 		AddRow("information_schema").
 		AddRow("mysql").
 		AddRow("testdb")
-	mock.ExpectQuery("SHOW DATABASES").WillReturnRows(rows)
+	mock.ExpectQuery("SELECT SCHEMA_NAME FROM information_schema.SCHEMATA ORDER BY SCHEMA_NAME").WillReturnRows(rows)
 
 	// Call the tool
 	ctx := context.Background()
@@ -101,11 +102,15 @@ func TestToolListTablesSuccess(t *testing.T) {
 	mock, cleanup := setupMockDB(t)
 	defer cleanup()
 
-	rows := sqlmock.NewRows([]string{"Tables_in_testdb"}).
-		AddRow("users").
-		AddRow("orders").
-		AddRow("products")
-	mock.ExpectQuery("SHOW TABLES FROM `testdb`").WillReturnRows(rows)
+	// New query fetches TABLE_NAME, ENGINE, TABLE_ROWS, TABLE_COMMENT
+	rows := sqlmock.NewRows([]string{"TABLE_NAME", "ENGINE", "TABLE_ROWS", "TABLE_COMMENT"}).
+		AddRow("users", "InnoDB", 100, "Users table").
+		AddRow("orders", "InnoDB", 200, "Orders table").
+		AddRow("products", "MyISAM", 50, "Products table")
+
+	mock.ExpectQuery(`(?s)SELECT\s+TABLE_NAME\s*,\s*ENGINE\s*,\s*TABLE_ROWS\s*,\s*TABLE_COMMENT\s+FROM\s+information_schema\.TABLES\s+WHERE\s+TABLE_SCHEMA\s*=\s*\?\s+ORDER\s+BY\s+TABLE_NAME`).
+		WithArgs("testdb").
+		WillReturnRows(rows)
 
 	ctx := context.Background()
 	_, output, err := toolListTables(ctx, &mcp.CallToolRequest{}, ListTablesInput{Database: "testdb"})
@@ -116,6 +121,116 @@ func TestToolListTablesSuccess(t *testing.T) {
 
 	if len(output.Tables) != 3 {
 		t.Errorf("expected 3 tables, got %d", len(output.Tables))
+	}
+
+	// Verify new fields
+	if output.Tables[0].Name != "users" {
+		t.Errorf("expected table 'users', got '%s'", output.Tables[0].Name)
+	}
+	if output.Tables[0].Engine != "InnoDB" {
+		t.Errorf("expected engine 'InnoDB', got '%s'", output.Tables[0].Engine)
+	}
+	if output.Tables[0].Rows == nil || *output.Tables[0].Rows != 100 {
+		t.Errorf("expected rows 100, got %v", output.Tables[0].Rows)
+	}
+	if output.Tables[0].Comment != "Users table" {
+		t.Errorf("expected comment 'Users table', got '%s'", output.Tables[0].Comment)
+	}
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Errorf("unfulfilled expectations: %v", err)
+	}
+}
+
+func TestToolListTablesMissingDatabase(t *testing.T) {
+	mock, cleanup := setupMockDB(t)
+	defer cleanup()
+
+	rows := sqlmock.NewRows([]string{"TABLE_NAME", "ENGINE", "TABLE_ROWS", "TABLE_COMMENT"})
+	mock.ExpectQuery(`(?s)SELECT\s+TABLE_NAME\s*,\s*ENGINE\s*,\s*TABLE_ROWS\s*,\s*TABLE_COMMENT\s+FROM\s+information_schema\.TABLES\s+WHERE\s+TABLE_SCHEMA\s*=\s*\?\s+ORDER\s+BY\s+TABLE_NAME`).
+		WithArgs("missingdb").
+		WillReturnRows(rows)
+
+	schemaRows := sqlmock.NewRows([]string{"1"})
+	mock.ExpectQuery("SELECT 1 FROM information_schema.SCHEMATA WHERE SCHEMA_NAME = \\? LIMIT 1").
+		WithArgs("missingdb").
+		WillReturnRows(schemaRows)
+
+	ctx := context.Background()
+	_, _, err := toolListTables(ctx, &mcp.CallToolRequest{}, ListTablesInput{Database: "missingdb"})
+	if err == nil {
+		t.Fatal("expected error for missing database, got nil")
+	}
+	if err.Error() != "database not found: missingdb" {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Errorf("unfulfilled expectations: %v", err)
+	}
+}
+
+func TestToolListTablesEmptySchemaReturnsEmpty(t *testing.T) {
+	mock, cleanup := setupMockDB(t)
+	defer cleanup()
+
+	mock.MatchExpectationsInOrder(false)
+
+	rows := sqlmock.NewRows([]string{"TABLE_NAME", "ENGINE", "TABLE_ROWS", "TABLE_COMMENT"})
+	mock.ExpectQuery(`(?s)SELECT\s+TABLE_NAME\s*,\s*ENGINE\s*,\s*TABLE_ROWS\s*,\s*TABLE_COMMENT\s+FROM\s+information_schema\.TABLES\s+WHERE\s+TABLE_SCHEMA\s*=\s*\?\s+ORDER\s+BY\s+TABLE_NAME`).
+		WithArgs("emptydb").
+		WillReturnRows(rows)
+
+	schemaRows := sqlmock.NewRows([]string{"1"}).AddRow(1)
+	mock.ExpectQuery("SELECT 1 FROM information_schema.SCHEMATA WHERE SCHEMA_NAME = \\? LIMIT 1").
+		WithArgs("emptydb").
+		WillReturnRows(schemaRows)
+	// Allow duplicate schema checks if triggered by mock behavior.
+	schemaRowsSecond := sqlmock.NewRows([]string{"1"}).AddRow(1)
+	mock.ExpectQuery("SELECT 1 FROM information_schema.SCHEMATA WHERE SCHEMA_NAME = \\? LIMIT 1").
+		WithArgs("emptydb").
+		WillReturnRows(schemaRowsSecond)
+
+	ctx := context.Background()
+	_, output, err := toolListTables(ctx, &mcp.CallToolRequest{}, ListTablesInput{Database: "emptydb"})
+	if err != nil {
+		t.Fatalf("expected empty list, got error: %v", err)
+	}
+	if len(output.Tables) != 0 {
+		t.Fatalf("expected 0 tables, got %d", len(output.Tables))
+	}
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Errorf("unfulfilled expectations: %v", err)
+	}
+}
+
+func TestToolListTablesNullMetadata(t *testing.T) {
+	mock, cleanup := setupMockDB(t)
+	defer cleanup()
+
+	rows := sqlmock.NewRows([]string{"TABLE_NAME", "ENGINE", "TABLE_ROWS", "TABLE_COMMENT"}).
+		AddRow("audit_log", nil, nil, nil)
+	mock.ExpectQuery(`(?s)SELECT\s+TABLE_NAME\s*,\s*ENGINE\s*,\s*TABLE_ROWS\s*,\s*TABLE_COMMENT\s+FROM\s+information_schema\.TABLES\s+WHERE\s+TABLE_SCHEMA\s*=\s*\?\s+ORDER\s+BY\s+TABLE_NAME`).
+		WithArgs("testdb").
+		WillReturnRows(rows)
+
+	ctx := context.Background()
+	_, output, err := toolListTables(ctx, &mcp.CallToolRequest{}, ListTablesInput{Database: "testdb"})
+	if err != nil {
+		t.Fatalf("toolListTables failed: %v", err)
+	}
+	if len(output.Tables) != 1 {
+		t.Fatalf("expected 1 table, got %d", len(output.Tables))
+	}
+	if output.Tables[0].Engine != "" {
+		t.Errorf("expected empty engine, got '%s'", output.Tables[0].Engine)
+	}
+	if output.Tables[0].Rows != nil {
+		t.Errorf("expected nil rows, got %v", output.Tables[0].Rows)
+	}
+	if output.Tables[0].Comment != "" {
+		t.Errorf("expected empty comment, got '%s'", output.Tables[0].Comment)
 	}
 
 	if err := mock.ExpectationsWereMet(); err != nil {
@@ -146,12 +261,15 @@ func TestToolDescribeTableSuccess(t *testing.T) {
 	mock, cleanup := setupMockDB(t)
 	defer cleanup()
 
-	rows := sqlmock.NewRows([]string{"Field", "Type", "Collation", "Null", "Key", "Default", "Extra", "Privileges", "Comment"}).
-		AddRow("id", "int", "", "NO", "PRI", "", "auto_increment", "select,insert,update,references", "").
-		AddRow("name", "varchar(255)", "utf8mb4_general_ci", "NO", "", "", "", "select,insert,update,references", "User name").
-		AddRow("email", "varchar(255)", "utf8mb4_general_ci", "YES", "UNI", "", "", "select,insert,update,references", "")
+	// New query fetches 8 columns: COLUMN_NAME, COLUMN_TYPE, IS_NULLABLE, COLUMN_KEY, COLUMN_DEFAULT, EXTRA, COLUMN_COMMENT, COLLATION_NAME
+	rows := sqlmock.NewRows([]string{"COLUMN_NAME", "COLUMN_TYPE", "IS_NULLABLE", "COLUMN_KEY", "COLUMN_DEFAULT", "EXTRA", "COLUMN_COMMENT", "COLLATION_NAME"}).
+		AddRow("id", "int", "NO", "PRI", nil, "auto_increment", "", nil).
+		AddRow("name", "varchar(255)", "YES", "UNI", nil, "", "User name", "utf8mb4_unicode_ci").
+		AddRow("email", "varchar(255)", "YES", "", nil, "", "", "utf8mb4_unicode_ci")
 
-	mock.ExpectQuery("SHOW FULL COLUMNS FROM `testdb`.`users`").WillReturnRows(rows)
+	mock.ExpectQuery(`(?s)SELECT\s+COLUMN_NAME\s*,\s*COLUMN_TYPE\s*,\s*IS_NULLABLE\s*,\s*COLUMN_KEY\s*,\s*COLUMN_DEFAULT\s*,\s*EXTRA\s*,\s*COLUMN_COMMENT\s*,\s*COLLATION_NAME\s+FROM\s+information_schema\.COLUMNS\s+WHERE\s+TABLE_SCHEMA\s*=\s*\?\s+AND\s+TABLE_NAME\s*=\s*\?\s+ORDER\s+BY\s+ORDINAL_POSITION`).
+		WithArgs("testdb", "users").
+		WillReturnRows(rows)
 
 	ctx := context.Background()
 	_, output, err := toolDescribeTable(ctx, &mcp.CallToolRequest{}, DescribeTableInput{
@@ -183,17 +301,122 @@ func TestToolDescribeTableSuccess(t *testing.T) {
 	}
 }
 
+func TestToolDescribeTableNonExistentTable(t *testing.T) {
+	mock, cleanup := setupMockDB(t)
+	defer cleanup()
+
+	rows := sqlmock.NewRows([]string{"COLUMN_NAME", "COLUMN_TYPE", "IS_NULLABLE", "COLUMN_KEY", "COLUMN_DEFAULT", "EXTRA", "COLUMN_COMMENT", "COLLATION_NAME"})
+	mock.ExpectQuery(`(?s)SELECT\s+COLUMN_NAME\s*,\s*COLUMN_TYPE\s*,\s*IS_NULLABLE\s*,\s*COLUMN_KEY\s*,\s*COLUMN_DEFAULT\s*,\s*EXTRA\s*,\s*COLUMN_COMMENT\s*,\s*COLLATION_NAME\s+FROM\s+information_schema\.COLUMNS\s+WHERE\s+TABLE_SCHEMA\s*=\s*\?\s+AND\s+TABLE_NAME\s*=\s*\?\s+ORDER\s+BY\s+ORDINAL_POSITION`).
+		WithArgs("testdb", "missing").
+		WillReturnRows(rows)
+
+	tableRows := sqlmock.NewRows([]string{"1"})
+	mock.ExpectQuery("SELECT 1 FROM information_schema.TABLES WHERE TABLE_SCHEMA = \\? AND TABLE_NAME = \\? LIMIT 1").
+		WithArgs("testdb", "missing").
+		WillReturnRows(tableRows)
+
+	schemaRows := sqlmock.NewRows([]string{"1"}).AddRow(1)
+	mock.ExpectQuery("SELECT 1 FROM information_schema.SCHEMATA WHERE SCHEMA_NAME = \\? LIMIT 1").
+		WithArgs("testdb").
+		WillReturnRows(schemaRows)
+
+	ctx := context.Background()
+	_, _, err := toolDescribeTable(ctx, &mcp.CallToolRequest{}, DescribeTableInput{
+		Database: "testdb",
+		Table:    "missing",
+	})
+	if err == nil {
+		t.Fatal("expected error for missing table, got nil")
+	}
+	if err.Error() != "table not found: testdb.missing" {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Errorf("unfulfilled expectations: %v", err)
+	}
+}
+
+func TestToolDescribeTableNoColumnsFound(t *testing.T) {
+	mock, cleanup := setupMockDB(t)
+	defer cleanup()
+
+	rows := sqlmock.NewRows([]string{"COLUMN_NAME", "COLUMN_TYPE", "IS_NULLABLE", "COLUMN_KEY", "COLUMN_DEFAULT", "EXTRA", "COLUMN_COMMENT", "COLLATION_NAME"})
+	mock.ExpectQuery(`(?s)SELECT\s+COLUMN_NAME\s*,\s*COLUMN_TYPE\s*,\s*IS_NULLABLE\s*,\s*COLUMN_KEY\s*,\s*COLUMN_DEFAULT\s*,\s*EXTRA\s*,\s*COLUMN_COMMENT\s*,\s*COLLATION_NAME\s+FROM\s+information_schema\.COLUMNS\s+WHERE\s+TABLE_SCHEMA\s*=\s*\?\s+AND\s+TABLE_NAME\s*=\s*\?\s+ORDER\s+BY\s+ORDINAL_POSITION`).
+		WithArgs("testdb", "empty_table").
+		WillReturnRows(rows)
+
+	tableRows := sqlmock.NewRows([]string{"1"}).AddRow(1)
+	mock.ExpectQuery("SELECT 1 FROM information_schema.TABLES WHERE TABLE_SCHEMA = \\? AND TABLE_NAME = \\? LIMIT 1").
+		WithArgs("testdb", "empty_table").
+		WillReturnRows(tableRows)
+
+	ctx := context.Background()
+	_, _, err := toolDescribeTable(ctx, &mcp.CallToolRequest{}, DescribeTableInput{
+		Database: "testdb",
+		Table:    "empty_table",
+	})
+	if err == nil {
+		t.Fatal("expected error for table with no columns, got nil")
+	}
+	if err.Error() != "no columns found for table: testdb.empty_table" {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Errorf("unfulfilled expectations: %v", err)
+	}
+}
+
+func TestToolDescribeTableDatabaseNotFound(t *testing.T) {
+	mock, cleanup := setupMockDB(t)
+	defer cleanup()
+
+	rows := sqlmock.NewRows([]string{"COLUMN_NAME", "COLUMN_TYPE", "IS_NULLABLE", "COLUMN_KEY", "COLUMN_DEFAULT", "EXTRA", "COLUMN_COMMENT", "COLLATION_NAME"})
+	mock.ExpectQuery(`(?s)SELECT\s+COLUMN_NAME\s*,\s*COLUMN_TYPE\s*,\s*IS_NULLABLE\s*,\s*COLUMN_KEY\s*,\s*COLUMN_DEFAULT\s*,\s*EXTRA\s*,\s*COLUMN_COMMENT\s*,\s*COLLATION_NAME\s+FROM\s+information_schema\.COLUMNS\s+WHERE\s+TABLE_SCHEMA\s*=\s*\?\s+AND\s+TABLE_NAME\s*=\s*\?\s+ORDER\s+BY\s+ORDINAL_POSITION`).
+		WithArgs("missingdb", "users").
+		WillReturnRows(rows)
+
+	tableRows := sqlmock.NewRows([]string{"1"})
+	mock.ExpectQuery("SELECT 1 FROM information_schema.TABLES WHERE TABLE_SCHEMA = \\? AND TABLE_NAME = \\? LIMIT 1").
+		WithArgs("missingdb", "users").
+		WillReturnRows(tableRows)
+
+	schemaRows := sqlmock.NewRows([]string{"1"})
+	mock.ExpectQuery("SELECT 1 FROM information_schema.SCHEMATA WHERE SCHEMA_NAME = \\? LIMIT 1").
+		WithArgs("missingdb").
+		WillReturnRows(schemaRows)
+
+	ctx := context.Background()
+	_, _, err := toolDescribeTable(ctx, &mcp.CallToolRequest{}, DescribeTableInput{
+		Database: "missingdb",
+		Table:    "users",
+	})
+	if err == nil {
+		t.Fatal("expected error for missing database, got nil")
+	}
+	if err.Error() != "database not found: missingdb" {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Errorf("unfulfilled expectations: %v", err)
+	}
+}
+
 func TestToolDescribeTableWithNullCollation(t *testing.T) {
 	mock, cleanup := setupMockDB(t)
 	defer cleanup()
 
 	// MySQL 8.4+ returns NULL for Collation on non-string columns
-	rows := sqlmock.NewRows([]string{"Field", "Type", "Collation", "Null", "Key", "Default", "Extra", "Privileges", "Comment"}).
-		AddRow("id", "int", nil, "NO", "PRI", nil, "auto_increment", "select,insert,update,references", nil).
-		AddRow("created_at", "timestamp", nil, "YES", "", nil, "", "select,insert,update,references", nil).
-		AddRow("name", "varchar(255)", "utf8mb4_general_ci", "NO", "", nil, "", "select,insert,update,references", "User name")
+	rows := sqlmock.NewRows([]string{"COLUMN_NAME", "COLUMN_TYPE", "IS_NULLABLE", "COLUMN_KEY", "COLUMN_DEFAULT", "EXTRA", "COLUMN_COMMENT", "COLLATION_NAME"}).
+		AddRow("id", "int", "NO", "PRI", nil, "auto_increment", "", nil).
+		AddRow("created_at", "timestamp", "YES", "", nil, "", "", nil).
+		AddRow("name", "varchar(255)", "NO", "", nil, "", "User name", "utf8mb4_unicode_ci")
 
-	mock.ExpectQuery("SHOW FULL COLUMNS FROM `testdb`.`users`").WillReturnRows(rows)
+	mock.ExpectQuery(`(?s)SELECT\s+COLUMN_NAME\s*,\s*COLUMN_TYPE\s*,\s*IS_NULLABLE\s*,\s*COLUMN_KEY\s*,\s*COLUMN_DEFAULT\s*,\s*EXTRA\s*,\s*COLUMN_COMMENT\s*,\s*COLLATION_NAME\s+FROM\s+information_schema\.COLUMNS\s+WHERE\s+TABLE_SCHEMA\s*=\s*\?\s+AND\s+TABLE_NAME\s*=\s*\?\s+ORDER\s+BY\s+ORDINAL_POSITION`).
+		WithArgs("testdb", "users").
+		WillReturnRows(rows)
 
 	ctx := context.Background()
 	_, output, err := toolDescribeTable(ctx, &mcp.CallToolRequest{}, DescribeTableInput{
@@ -213,8 +436,8 @@ func TestToolDescribeTableWithNullCollation(t *testing.T) {
 	if output.Columns[0].Collation != "" {
 		t.Errorf("expected empty collation for int column, got '%s'", output.Columns[0].Collation)
 	}
-	if output.Columns[2].Collation != "utf8mb4_general_ci" {
-		t.Errorf("expected 'utf8mb4_general_ci' collation, got '%s'", output.Columns[2].Collation)
+	if output.Columns[2].Collation != "utf8mb4_unicode_ci" {
+		t.Errorf("expected 'utf8mb4_unicode_ci' collation, got '%s'", output.Columns[2].Collation)
 	}
 
 	if err := mock.ExpectationsWereMet(); err != nil {
@@ -369,6 +592,74 @@ func TestToolRunQueryWithMaxRows(t *testing.T) {
 	// Should be limited to 3 rows
 	if len(output.Rows) != 3 {
 		t.Errorf("expected 3 rows (limited), got %d", len(output.Rows))
+	}
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Errorf("unfulfilled expectations: %v", err)
+	}
+}
+
+func TestToolRunQueryWithDatabase(t *testing.T) {
+	mock, cleanup := setupMockDB(t)
+	defer cleanup()
+
+	// Expect USE statement followed by SELECT
+	rows := sqlmock.NewRows([]string{"id", "name"}).
+		AddRow(1, "Alice")
+	mock.ExpectExec("USE `testdb`").WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectQuery("SELECT \\* FROM users").WillReturnRows(rows)
+
+	ctx := context.Background()
+	_, output, err := toolRunQuery(ctx, &mcp.CallToolRequest{}, RunQueryInput{
+		SQL:      "SELECT * FROM users",
+		Database: "testdb",
+	})
+
+	if err != nil {
+		t.Fatalf("toolRunQuery with database failed: %v", err)
+	}
+
+	if len(output.Rows) != 1 {
+		t.Errorf("expected 1 row, got %d", len(output.Rows))
+	}
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Errorf("unfulfilled expectations: %v", err)
+	}
+}
+
+func TestToolRunQueryQueryError(t *testing.T) {
+	mock, cleanup := setupMockDB(t)
+	defer cleanup()
+
+	mock.ExpectQuery("SELECT \\* FROM nonexistent").WillReturnError(sqlmock.ErrCancelled)
+
+	ctx := context.Background()
+	_, _, err := toolRunQuery(ctx, &mcp.CallToolRequest{}, RunQueryInput{
+		SQL: "SELECT * FROM nonexistent",
+	})
+
+	if err == nil {
+		t.Fatal("expected error for query failure")
+	}
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Errorf("unfulfilled expectations: %v", err)
+	}
+}
+
+func TestToolRunQueryInvalidDatabase(t *testing.T) {
+	mock, cleanup := setupMockDB(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	_, _, err := toolRunQuery(ctx, &mcp.CallToolRequest{}, RunQueryInput{
+		SQL:      "SELECT * FROM users",
+		Database: "test`db", // Invalid name with backtick
+	})
+
+	if err == nil {
+		t.Fatal("expected error for invalid database name")
 	}
 
 	if err := mock.ExpectationsWereMet(); err != nil {
@@ -548,4 +839,72 @@ func TestToolUseConnectionNotFound(t *testing.T) {
 	}
 
 	_ = result.mock
+}
+func TestToolServerInfoFallback(t *testing.T) {
+	result := setupMockDBFull(t)
+	defer result.cleanup()
+
+	mock := result.mock
+	// Set server type to MariaDB for this test
+	connManager.serverTypes["mock"] = ServerTypeMariaDB
+
+	// 1. Mock VERSION() query
+	mock.ExpectQuery("SELECT VERSION\\(\\)").WillReturnRows(
+		sqlmock.NewRows([]string{"VERSION()"}).AddRow("11.4.2-MariaDB"),
+	)
+
+	// 2. Mock performance_schema.global_variables FAILURE
+	mock.ExpectQuery("SELECT VARIABLE_NAME, VARIABLE_VALUE FROM performance_schema.global_variables").
+		WillReturnError(fmt.Errorf("Table 'performance_schema.global_variables' doesn't exist"))
+
+	// 3. Mock SHOW VARIABLES FALLBACK
+	varRows := sqlmock.NewRows([]string{"Variable_name", "Value"}).
+		AddRow("version_comment", "mariadb.org binary distribution").
+		AddRow("character_set_server", "utf8mb4").
+		AddRow("collation_server", "utf8mb4_unicode_ci").
+		AddRow("max_connections", "151")
+	mock.ExpectQuery("SHOW VARIABLES WHERE Variable_name IN").WillReturnRows(varRows)
+
+	// 4. Mock performance_schema.global_status FAILURE
+	mock.ExpectQuery("SELECT VARIABLE_NAME, VARIABLE_VALUE FROM performance_schema.global_status").
+		WillReturnError(fmt.Errorf("Table 'performance_schema.global_status' doesn't exist"))
+
+	// 5. Mock SHOW GLOBAL STATUS FALLBACK
+	statusRows := sqlmock.NewRows([]string{"Variable_name", "Value"}).
+		AddRow("Uptime", "3600").
+		AddRow("Threads_connected", "5")
+	mock.ExpectQuery("SHOW GLOBAL STATUS WHERE Variable_name IN").WillReturnRows(statusRows)
+
+	// 6. Mock final info query
+	mock.ExpectQuery("SELECT CURRENT_USER\\(\\), IFNULL\\(DATABASE\\(\\), ''\\)").WillReturnRows(
+		sqlmock.NewRows([]string{"CURRENT_USER()", "DATABASE()"}).AddRow("root@localhost", "testdb"),
+	)
+
+	ctx := context.Background()
+	_, output, err := toolServerInfo(ctx, &mcp.CallToolRequest{}, ServerInfoInput{})
+
+	if err != nil {
+		t.Fatalf("toolServerInfo failed unexpectedly during fallback: %v", err)
+	}
+
+	// Verify the output got populated via fallbacks
+	if output.Version != "11.4.2-MariaDB" {
+		t.Errorf("expected version 11.4.2-MariaDB, got %s", output.Version)
+	}
+	if output.ServerEngine != "mariadb" {
+		t.Errorf("expected engine mariadb, got %s", output.ServerEngine)
+	}
+	if output.VersionComment != "mariadb.org binary distribution" {
+		t.Errorf("expected comment, got %s", output.VersionComment)
+	}
+	if output.Uptime != 3600 {
+		t.Errorf("expected uptime 3600, got %d", output.Uptime)
+	}
+	if output.ThreadsConnected != 5 {
+		t.Errorf("expected threads 5, got %d", output.ThreadsConnected)
+	}
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Errorf("unfulfilled expectations: %v", err)
+	}
 }

@@ -18,7 +18,10 @@ type ListTablesInput struct {
 }
 
 type TableInfo struct {
-	Name string `json:"name" jsonschema:"table name"`
+	Name    string `json:"name" jsonschema:"table name"`
+	Engine  string `json:"engine,omitempty" jsonschema:"storage engine (e.g. InnoDB, MyISAM)"`
+	Rows    *int64 `json:"rows,omitempty" jsonschema:"estimated number of rows"`
+	Comment string `json:"comment,omitempty" jsonschema:"table comment"`
 }
 
 type ListTablesOutput struct {
@@ -46,7 +49,7 @@ type DescribeTableOutput struct {
 }
 
 type RunQueryInput struct {
-	SQL      string `json:"sql" jsonschema:"SQL query to execute; must start with SELECT, SHOW, DESCRIBE, or EXPLAIN"`
+	SQL      string `json:"sql" jsonschema:"SQL query to execute; must start with SELECT, SHOW, DESCRIBE, or EXPLAIN. Apply MySQL optimization guidelines before execution."`
 	MaxRows  *int   `json:"max_rows,omitempty" jsonschema:"optional row limit overriding the default max rows"`
 	Database string `json:"database,omitempty" jsonschema:"optional database name to USE before running the query"`
 }
@@ -68,6 +71,7 @@ type ServerInfoInput struct{}
 
 type ServerInfoOutput struct {
 	Version          string `json:"version" jsonschema:"MySQL server version"`
+	ServerEngine     string `json:"server_engine" jsonschema:"Server engine (mysql or mariadb)"`
 	VersionComment   string `json:"version_comment" jsonschema:"MySQL version comment (e.g., MySQL Community Server)"`
 	Uptime           int64  `json:"uptime_seconds" jsonschema:"server uptime in seconds"`
 	CurrentDatabase  string `json:"current_database" jsonschema:"currently selected database, if any"`

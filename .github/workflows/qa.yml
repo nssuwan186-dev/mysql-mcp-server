@@ -125,7 +125,7 @@ jobs:
         ports:
           - 3306:3306
         options: >-
-          --health-cmd="mysqladmin ping -h localhost"
+          --health-cmd="mysqladmin ping -h localhost -u root -ptestpass"
           --health-interval=10s
           --health-timeout=5s
           --health-retries=5
@@ -163,6 +163,71 @@ jobs:
           MYSQL_TEST_DSN: "root:testpass@tcp(127.0.0.1:3306)/testdb?parseTime=true"
         run: |
           # Run MCP server tests with real MySQL
+          go test -v -tags=integration ./...
+
+      - name: Test CLI startup
+        env:
+          MYSQL_DSN: "root:testpass@tcp(127.0.0.1:3306)/testdb?parseTime=true"
+        run: |
+          go build -o mysql-mcp-server ./cmd/mysql-mcp-server
+          timeout 5 ./mysql-mcp-server 2>&1 || true
+          echo "CLI startup test passed"
+
+  # ============================================
+  # Stage 4b: Integration Tests (MariaDB 11.4)
+  # ============================================
+  integration-tests-mariadb:
+    name: Integration Tests (MariaDB 11.4)
+    runs-on: ubuntu-latest
+    needs: [unit-tests]
+
+    services:
+      mariadb:
+        image: mariadb:11.4
+        env:
+          MARIADB_ROOT_PASSWORD: testpass
+          MARIADB_DATABASE: testdb
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mariadb-admin ping -h localhost -u root -ptestpass"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Wait for MariaDB
+        run: |
+          for i in {1..30}; do
+            if mysqladmin ping -h 127.0.0.1 -u root -ptestpass --silent 2>/dev/null; then
+              echo "MariaDB is ready"
+              break
+            fi
+            echo "Waiting for MariaDB..."
+            sleep 2
+          done
+
+      - name: Initialize test database
+        run: |
+          # Use same init.sql as local Docker Compose for consistent schema
+          mysql -h 127.0.0.1 -u root -ptestpass < tests/sql/init.sql
+          echo "Database initialized with test schema and data"
+
+      - name: Run integration tests
+        env:
+          MYSQL_DSN: "root:testpass@tcp(127.0.0.1:3306)/testdb?parseTime=true"
+          MYSQL_TEST_DSN: "root:testpass@tcp(127.0.0.1:3306)/testdb?parseTime=true"
+        run: |
+          # Run MCP server tests with real MariaDB
           go test -v -tags=integration ./...
 
       - name: Test CLI startup
@@ -254,7 +319,7 @@ jobs:
         ports:
           - 3306:3306
         options: >-
-          --health-cmd="mysqladmin ping -h localhost"
+          --health-cmd="mysqladmin ping -h localhost -u root -ptestpass"
           --health-interval=10s
           --health-timeout=5s
           --health-retries=5
@@ -323,7 +388,7 @@ jobs:
   qa-summary:
     name: QA Summary
     runs-on: ubuntu-latest
-    needs: [lint, security, unit-tests, integration-tests, build, docker, api-tests]
+    needs: [lint, security, unit-tests, integration-tests, integration-tests-mariadb, build, docker, api-tests]
     if: always()
     steps:
       - name: Check all jobs
@@ -333,6 +398,7 @@ jobs:
           echo "Security: ${{ needs.security.result }}"
           echo "Unit Tests: ${{ needs.unit-tests.result }}"
           echo "Integration Tests: ${{ needs.integration-tests.result }}"
+          echo "MariaDB Tests: ${{ needs.integration-tests-mariadb.result }}"
           echo "Build: ${{ needs.build.result }}"
           echo "Docker: ${{ needs.docker.result }}"
           echo "API Tests: ${{ needs.api-tests.result }}"

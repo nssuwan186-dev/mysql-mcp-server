@@ -6,6 +6,10 @@
 #
 # Or specify with: mysql-mcp-server --config /path/to/config.yaml
 #
+# Command-line flags (optional):
+#   --silent, -s   Suppress INFO/WARN logs (only errors to stderr); good for production.
+#   --daemon, -d   Run in background (Unix, typically with http.enabled: true).
+#
 # Environment variables override config file values.
 
 # Database connections

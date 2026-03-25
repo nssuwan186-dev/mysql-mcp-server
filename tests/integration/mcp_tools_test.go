@@ -476,7 +476,7 @@ func TestMCPTool_RunQuery_UnicodeData(t *testing.T) {
 	db := setupTestDB(t)
 	ctx := context.Background()
 
-	rows, err := db.QueryContext(ctx, "SELECT unicode_text FROM testdb.special_data")
+	rows, err := db.QueryContext(ctx, "SELECT unicode_text FROM testdb.special_data WHERE unicode_text IS NOT NULL")
 	if err != nil {
 		t.Fatalf("query failed: %v", err)
 	}

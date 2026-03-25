@@ -8,8 +8,6 @@ import (
 	"time"
 
 	_ "github.com/go-sql-driver/mysql"
-
-	"github.com/askdba/mysql-mcp-server/internal/util"
 )
 
 type Client struct {
@@ -96,113 +94,6 @@ func (c *Client) Close() error {
 
 func (c *Client) withTimeout(ctx context.Context) (context.Context, context.CancelFunc) {
 	return context.WithTimeout(ctx, c.queryTimeout)
-}
-
-func (c *Client) ListDatabases(ctx context.Context) ([]string, error) {
-	ctx, cancel := c.withTimeout(ctx)
-	defer cancel()
-
-	rows, err := c.db.QueryContext(ctx, "SHOW DATABASES")
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var dbs []string
-	for rows.Next() {
-		var name string
-		if err := rows.Scan(&name); err != nil {
-			return nil, err
-		}
-		dbs = append(dbs, name)
-	}
-	return dbs, rows.Err()
-}
-
-func (c *Client) ListTables(ctx context.Context, database string) ([]string, error) {
-	if database == "" {
-		return nil, fmt.Errorf("database is required")
-	}
-
-	dbName, err := util.QuoteIdent(database)
-	if err != nil {
-		return nil, fmt.Errorf("invalid database name: %w", err)
-	}
-
-	ctx, cancel := c.withTimeout(ctx)
-	defer cancel()
-
-	if _, err := c.db.ExecContext(ctx, "USE "+dbName); err != nil {
-		return nil, err
-	}
-
-	rows, err := c.db.QueryContext(ctx, "SHOW TABLES")
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var tables []string
-	for rows.Next() {
-		var name string
-		if err := rows.Scan(&name); err != nil {
-			return nil, err
-		}
-		tables = append(tables, name)
-	}
-	return tables, rows.Err()
-}
-
-func (c *Client) DescribeTable(ctx context.Context, database, table string) ([]map[string]any, error) {
-	if database == "" || table == "" {
-		return nil, fmt.Errorf("database and table are required")
-	}
-
-	dbName, err := util.QuoteIdent(database)
-	if err != nil {
-		return nil, fmt.Errorf("invalid database name: %w", err)
-	}
-	tableName, err := util.QuoteIdent(table)
-	if err != nil {
-		return nil, fmt.Errorf("invalid table name: %w", err)
-	}
-
-	ctx, cancel := c.withTimeout(ctx)
-	defer cancel()
-
-	if _, err := c.db.ExecContext(ctx, "USE "+dbName); err != nil {
-		return nil, err
-	}
-
-	rows, err := c.db.QueryContext(ctx, "DESCRIBE "+tableName)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	cols, err := rows.Columns()
-	if err != nil {
-		return nil, err
-	}
-
-	var out []map[string]any
-	for rows.Next() {
-		values := make([]any, len(cols))
-		ptrs := make([]any, len(cols))
-		for i := range values {
-			ptrs[i] = &values[i]
-		}
-		if err := rows.Scan(ptrs...); err != nil {
-			return nil, err
-		}
-
-		row := map[string]any{}
-		for i, col := range cols {
-			row[col] = values[i]
-		}
-		out = append(out, row)
-	}
-	return out, rows.Err()
 }
 
 // RunQuery is intentionally “read oriented” – callers should enforce SELECT only.
