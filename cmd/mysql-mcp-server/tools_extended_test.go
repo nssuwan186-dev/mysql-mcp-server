@@ -1017,6 +1017,24 @@ func TestAnalyzeExplainPlanIndexAvailableButUnused(t *testing.T) {
 	}
 }
 
+func TestAnalyzeExplainPlanNoUnusedIndexWarningWhenAccessTypeMissing(t *testing.T) {
+	plan := []map[string]interface{}{
+		{
+			"table":         "products",
+			"type":          nil,
+			"possible_keys": "idx_category",
+			"key":           nil,
+			"Extra":         "",
+		},
+	}
+	warnings := analyzeExplainPlan(plan)
+	for _, w := range warnings {
+		if containsCI(w, "none were chosen") {
+			t.Fatalf("did not expect unused-index warning when access type is unknown, got: %v", warnings)
+		}
+	}
+}
+
 func TestAnalyzeExplainPlanFilesort(t *testing.T) {
 	plan := []map[string]interface{}{
 		{

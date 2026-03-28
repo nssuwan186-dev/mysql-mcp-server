@@ -209,6 +209,8 @@ func analyzeExplainPlan(plan []map[string]interface{}) []string {
 	for _, row := range plan {
 		table := fmt.Sprintf("%v", row["table"])
 		accessType := strings.ToUpper(fmt.Sprintf("%v", row["type"]))
+		// Missing type becomes "<NIL>" after fmt + ToUpper; do not treat as a known access type.
+		accessTypeKnown := accessType != "" && !strings.EqualFold(accessType, "<nil>")
 		key := fmt.Sprintf("%v", row["key"])
 		possibleKeys := fmt.Sprintf("%v", row["possible_keys"])
 		extra := strings.ToLower(fmt.Sprintf("%v", row["Extra"]))
@@ -228,8 +230,8 @@ func analyzeExplainPlan(plan []map[string]interface{}) []string {
 			}
 		}
 
-		// Index available but not used
-		if isNullLike(key) && !isNullLike(possibleKeys) && accessType != "ALL" {
+		// Index available but not used (requires a known non-ALL access type)
+		if isNullLike(key) && !isNullLike(possibleKeys) && accessType != "ALL" && accessTypeKnown {
 			warnings = append(warnings, fmt.Sprintf(
 				"Table '%s': indexes (%s) are available but none were chosen — check for type mismatches or functions wrapping indexed columns.",
 				table, possibleKeys,
