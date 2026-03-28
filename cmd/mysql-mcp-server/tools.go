@@ -328,6 +328,9 @@ func toolRunQuery(
 	if input.MaxRows != nil && *input.MaxRows > 0 && *input.MaxRows < maxRows {
 		limit = *input.MaxRows
 	}
+	if limit < 0 {
+		limit = 0
+	}
 
 	// Detect SELECT * before rewriting so we can surface a warning.
 	hasStar := util.HasSelectStar(sqlText)

@@ -67,9 +67,14 @@ func New(cfg Config) (*Client, error) {
 		return nil, err
 	}
 
+	mr := cfg.MaxRows
+	if mr < 0 {
+		mr = 0
+	}
+
 	return &Client{
 		db:           db,
-		maxRows:      cfg.MaxRows,
+		maxRows:      mr,
 		queryTimeout: time.Duration(cfg.QueryTimeoutS) * time.Second,
 	}, nil
 }
@@ -81,9 +86,14 @@ func NewWithDB(db *sql.DB, cfg Config) (*Client, error) {
 		return nil, fmt.Errorf("db is nil")
 	}
 
+	mr := cfg.MaxRows
+	if mr < 0 {
+		mr = 0
+	}
+
 	return &Client{
 		db:           db,
-		maxRows:      cfg.MaxRows,
+		maxRows:      mr,
 		queryTimeout: time.Duration(cfg.QueryTimeoutS) * time.Second,
 	}, nil
 }
@@ -103,6 +113,9 @@ func (c *Client) RunQuery(ctx context.Context, sqlText string, maxRows int) ([]m
 	}
 	if maxRows <= 0 || maxRows > c.maxRows {
 		maxRows = c.maxRows
+	}
+	if maxRows < 0 {
+		maxRows = 0
 	}
 
 	ctx, cancel := c.withTimeout(ctx)
