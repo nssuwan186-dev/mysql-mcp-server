@@ -329,6 +329,15 @@ func toolRunQuery(
 		limit = *input.MaxRows
 	}
 
+	// Detect SELECT * before rewriting so we can surface a warning.
+	hasStar := util.HasSelectStar(sqlText)
+
+	// Inject a server-side LIMIT so MySQL stops processing early.
+	// This is a best-effort optimization; we still enforce the row cap on
+	// the client side below to guard against non-SELECT statements where
+	// InjectLimit is a no-op.
+	sqlText = util.InjectLimit(sqlText, limit)
+
 	ctx, cancel := context.WithTimeout(ctx, queryTimeout)
 	defer cancel()
 
@@ -385,7 +394,6 @@ func toolRunQuery(
 	}
 	out.Columns = columns
 
-	count := 0
 	for rows.Next() {
 		// Create a slice of interface{} to hold the values
 		values := make([]interface{}, len(columns))
@@ -405,17 +413,19 @@ func toolRunQuery(
 		for i, v := range values {
 			rowValues[i] = util.NormalizeValue(v)
 		}
-		out.Rows = append(out.Rows, rowValues)
-		count++
 
-		if count >= limit {
-			// Close early to avoid leaving unread results on the connection.
-			if err := rows.Close(); err != nil {
-				return nil, QueryResult{}, fmt.Errorf("failed to close rows: %w", err)
-			}
-			rowsClosed = true
-			break
+		if len(out.Rows) < limit {
+			out.Rows = append(out.Rows, rowValues)
+			continue
 		}
+
+		// A row exists beyond the cap; omit it from the payload but signal truncation.
+		out.Truncated = true
+		if err := rows.Close(); err != nil {
+			return nil, QueryResult{}, fmt.Errorf("failed to close rows: %w", err)
+		}
+		rowsClosed = true
+		break
 	}
 
 	if !rowsClosed {
@@ -428,6 +438,12 @@ func toolRunQuery(
 			return nil, QueryResult{}, fmt.Errorf("failed to close rows: %w", err)
 		}
 		rowsClosed = true
+	}
+
+	// Attach a warning when SELECT * was used so the AI can adjust future queries.
+	if hasStar {
+		out.Warning = "SELECT * retrieves all columns, which increases payload size. " +
+			"Specify only the columns you need for better performance."
 	}
 
 	// Token estimation for output (optional)
