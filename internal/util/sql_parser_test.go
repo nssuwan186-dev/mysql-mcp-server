@@ -393,3 +393,108 @@ func min(a, b int) int {
 	}
 	return b
 }
+
+func TestInjectLimit(t *testing.T) {
+	tests := []struct {
+		name      string
+		sql       string
+		limit     int
+		wantSufx  string // expected suffix (case-insensitive)
+		unchanged bool   // true when the original query should be returned unchanged
+	}{
+		{
+			name:     "SELECT without LIMIT gets one added",
+			sql:      "SELECT * FROM users",
+			limit:    100,
+			wantSufx: " LIMIT 100",
+		},
+		{
+			name:      "SELECT that already has LIMIT is not changed",
+			sql:       "SELECT * FROM users LIMIT 5",
+			limit:     100,
+			unchanged: true,
+		},
+		{
+			name:     "SELECT with ORDER BY gets LIMIT appended",
+			sql:      "SELECT id FROM orders ORDER BY id DESC",
+			limit:    50,
+			wantSufx: " LIMIT 50",
+		},
+		{
+			name:     "SELECT with trailing semicolon strips semicolon and adds LIMIT",
+			sql:      "SELECT 1;",
+			limit:    10,
+			wantSufx: " LIMIT 10",
+		},
+		{
+			name:      "SHOW statement is not modified",
+			sql:       "SHOW TABLES",
+			limit:     100,
+			unchanged: true,
+		},
+		{
+			name:      "DESCRIBE statement is not modified",
+			sql:       "DESCRIBE users",
+			limit:     100,
+			unchanged: true,
+		},
+		{
+			name:      "limit=0 is a no-op",
+			sql:       "SELECT * FROM t",
+			limit:     0,
+			unchanged: true,
+		},
+		{
+			name:      "negative limit is a no-op",
+			sql:       "SELECT * FROM t",
+			limit:     -1,
+			unchanged: true,
+		},
+		{
+			name:     "UNION without LIMIT gets one added",
+			sql:      "SELECT id FROM a UNION SELECT id FROM b",
+			limit:    20,
+			wantSufx: " LIMIT 20",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := InjectLimit(tc.sql, tc.limit)
+			if tc.unchanged {
+				if got != tc.sql {
+					t.Errorf("expected unchanged SQL %q, got %q", tc.sql, got)
+				}
+				return
+			}
+			if !strings.HasSuffix(got, tc.wantSufx) {
+				t.Errorf("expected SQL to end with %q, got %q", tc.wantSufx, got)
+			}
+		})
+	}
+}
+
+func TestHasSelectStar(t *testing.T) {
+	tests := []struct {
+		name string
+		sql  string
+		want bool
+	}{
+		{"SELECT *", "SELECT * FROM users", true},
+		{"SELECT t.*", "SELECT t.* FROM users t", true},
+		{"SELECT columns", "SELECT id, name FROM users", false},
+		{"SHOW TABLES", "SHOW TABLES", false},
+		{"SELECT with no star", "SELECT id FROM users WHERE id = 1", false},
+		{"UNION with star on left", "SELECT * FROM a UNION SELECT id FROM b", true},
+		{"COUNT star is not a bare star", "SELECT COUNT(*) FROM users", false},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := HasSelectStar(tc.sql)
+			if got != tc.want {
+				t.Errorf("HasSelectStar(%q) = %v, want %v", tc.sql, got, tc.want)
+			}
+		})
+	}
+}
