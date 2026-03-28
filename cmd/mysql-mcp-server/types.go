@@ -57,7 +57,7 @@ type RunQueryInput struct {
 type QueryResult struct {
 	Columns   []string        `json:"columns" jsonschema:"column names"`
 	Rows      [][]interface{} `json:"rows" jsonschema:"rows of values"`
-	Truncated bool            `json:"truncated,omitempty" jsonschema:"true if the result was capped at the row limit"`
+	Truncated bool            `json:"truncated,omitempty" jsonschema:"true if more rows existed beyond the row limit (not set when the result size exactly equals the limit)"`
 	Warning   string          `json:"warning,omitempty" jsonschema:"performance or usage warning, if any"`
 }
 

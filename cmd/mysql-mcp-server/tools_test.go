@@ -949,6 +949,39 @@ func TestToolRunQueryTruncatedFlag(t *testing.T) {
 	}
 }
 
+func TestToolRunQueryNotTruncatedWhenResultMatchesLimitExactly(t *testing.T) {
+	mock, cleanup := setupMockDB(t)
+	defer cleanup()
+
+	oldMaxRows := maxRows
+	maxRows = 2
+	defer func() { maxRows = oldMaxRows }()
+
+	// Exactly two rows: no third row exists, so Truncated must stay false.
+	rows := sqlmock.NewRows([]string{"id"}).
+		AddRow(1).
+		AddRow(2)
+
+	mock.ExpectQuery("SELECT id FROM t LIMIT 2").WillReturnRows(rows)
+
+	ctx := context.Background()
+	_, output, err := toolRunQuery(ctx, &mcp.CallToolRequest{}, RunQueryInput{
+		SQL: "SELECT id FROM t",
+	})
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(output.Rows) != 2 {
+		t.Errorf("expected 2 rows, got %d", len(output.Rows))
+	}
+
+	if output.Truncated {
+		t.Error("expected Truncated=false when result count equals the limit and no further rows exist")
+	}
+}
+
 func TestToolRunQueryNotTruncated(t *testing.T) {
 	mock, cleanup := setupMockDB(t)
 	defer cleanup()

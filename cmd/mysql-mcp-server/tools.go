@@ -394,7 +394,6 @@ func toolRunQuery(
 	}
 	out.Columns = columns
 
-	count := 0
 	for rows.Next() {
 		// Create a slice of interface{} to hold the values
 		values := make([]interface{}, len(columns))
@@ -414,18 +413,19 @@ func toolRunQuery(
 		for i, v := range values {
 			rowValues[i] = util.NormalizeValue(v)
 		}
-		out.Rows = append(out.Rows, rowValues)
-		count++
 
-		if count >= limit {
-			// Close early to avoid leaving unread results on the connection.
-			if err := rows.Close(); err != nil {
-				return nil, QueryResult{}, fmt.Errorf("failed to close rows: %w", err)
-			}
-			rowsClosed = true
-			out.Truncated = true
-			break
+		if len(out.Rows) < limit {
+			out.Rows = append(out.Rows, rowValues)
+			continue
 		}
+
+		// A row exists beyond the cap; omit it from the payload but signal truncation.
+		out.Truncated = true
+		if err := rows.Close(); err != nil {
+			return nil, QueryResult{}, fmt.Errorf("failed to close rows: %w", err)
+		}
+		rowsClosed = true
+		break
 	}
 
 	if !rowsClosed {
