@@ -37,10 +37,10 @@ type FileConfig struct {
 
 // FileConnectionConfig represents a connection in the config file.
 type FileConnectionConfig struct {
-	DSN         string      `yaml:"dsn" json:"dsn"`
-	Description string      `yaml:"description" json:"description"`
-	ReadOnly    bool        `yaml:"read_only" json:"read_only"`
-	SSL         string      `yaml:"ssl" json:"ssl"`   // "true", "false", "skip-verify", or empty
+	DSN         string         `yaml:"dsn" json:"dsn"`
+	Description string         `yaml:"description" json:"description"`
+	ReadOnly    bool           `yaml:"read_only" json:"read_only"`
+	SSL         string         `yaml:"ssl" json:"ssl"` // "true", "false", "skip-verify", or empty
 	SSH         *FileSSHConfig `yaml:"ssh" json:"ssh"` // optional SSH tunnel (bastion)
 }
 
@@ -83,9 +83,9 @@ type FileLoggingConfig struct {
 
 // FileHTTPConfig represents HTTP settings in the config file.
 type FileHTTPConfig struct {
-	Enabled               bool                `yaml:"enabled" json:"enabled"`
-	Port                  int                 `yaml:"port" json:"port"`
-	RequestTimeoutSeconds int                 `yaml:"request_timeout_seconds" json:"request_timeout_seconds"`
+	Enabled               bool                 `yaml:"enabled" json:"enabled"`
+	Port                  int                  `yaml:"port" json:"port"`
+	RequestTimeoutSeconds int                  `yaml:"request_timeout_seconds" json:"request_timeout_seconds"`
 	RateLimit             *FileRateLimitConfig `yaml:"rate_limit" json:"rate_limit"`
 }
 
