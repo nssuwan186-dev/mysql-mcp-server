@@ -636,20 +636,28 @@ func toolListStatus(
 	ctx, cancel := context.WithTimeout(ctx, queryTimeout)
 	defer cancel()
 
-	query := "SHOW GLOBAL STATUS"
-	if input.Pattern != "" {
-		query += " LIKE ?"
-	}
-
 	var rows *sql.Rows
 	var err error
+
+	// Use performance_schema for better performance and flexibility
 	if input.Pattern != "" {
-		rows, err = getDB().QueryContext(ctx, query, input.Pattern)
+		rows, err = getDB().QueryContext(ctx,
+			"SELECT VARIABLE_NAME, VARIABLE_VALUE FROM performance_schema.global_status WHERE VARIABLE_NAME LIKE ? ORDER BY VARIABLE_NAME",
+			input.Pattern)
 	} else {
-		rows, err = getDB().QueryContext(ctx, query)
+		rows, err = getDB().QueryContext(ctx,
+			"SELECT VARIABLE_NAME, VARIABLE_VALUE FROM performance_schema.global_status ORDER BY VARIABLE_NAME")
 	}
 	if err != nil {
-		return nil, ListStatusOutput{}, fmt.Errorf("SHOW STATUS failed: %w", err)
+		// Fallback to SHOW GLOBAL STATUS for restricted environments or older versions
+		if input.Pattern != "" {
+			rows, err = getDB().QueryContext(ctx, "SHOW GLOBAL STATUS LIKE ?", input.Pattern)
+		} else {
+			rows, err = getDB().QueryContext(ctx, "SHOW GLOBAL STATUS")
+		}
+		if err != nil {
+			return nil, ListStatusOutput{}, fmt.Errorf("query status failed: %w", err)
+		}
 	}
 	defer rows.Close()
 
@@ -679,20 +687,28 @@ func toolListVariables(
 	ctx, cancel := context.WithTimeout(ctx, queryTimeout)
 	defer cancel()
 
-	query := "SHOW GLOBAL VARIABLES"
-	if input.Pattern != "" {
-		query += " LIKE ?"
-	}
-
 	var rows *sql.Rows
 	var err error
+
+	// Use performance_schema for better performance and flexibility
 	if input.Pattern != "" {
-		rows, err = getDB().QueryContext(ctx, query, input.Pattern)
+		rows, err = getDB().QueryContext(ctx,
+			"SELECT VARIABLE_NAME, VARIABLE_VALUE FROM performance_schema.global_variables WHERE VARIABLE_NAME LIKE ? ORDER BY VARIABLE_NAME",
+			input.Pattern)
 	} else {
-		rows, err = getDB().QueryContext(ctx, query)
+		rows, err = getDB().QueryContext(ctx,
+			"SELECT VARIABLE_NAME, VARIABLE_VALUE FROM performance_schema.global_variables ORDER BY VARIABLE_NAME")
 	}
 	if err != nil {
-		return nil, ListVariablesOutput{}, fmt.Errorf("SHOW VARIABLES failed: %w", err)
+		// Fallback to SHOW GLOBAL VARIABLES for restricted environments or older versions
+		if input.Pattern != "" {
+			rows, err = getDB().QueryContext(ctx, "SHOW GLOBAL VARIABLES LIKE ?", input.Pattern)
+		} else {
+			rows, err = getDB().QueryContext(ctx, "SHOW GLOBAL VARIABLES")
+		}
+		if err != nil {
+			return nil, ListVariablesOutput{}, fmt.Errorf("query variables failed: %w", err)
+		}
 	}
 	defer rows.Close()
 
