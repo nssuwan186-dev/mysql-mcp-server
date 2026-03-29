@@ -8,12 +8,12 @@ import (
 
 // QueryTokenRecord stores token usage information for a single tool/query call.
 type QueryTokenRecord struct {
-	Tool        string    `json:"tool"`
-	InputTokens int       `json:"input_tokens"`
-	OutputTokens int      `json:"output_tokens"`
-	TotalTokens int       `json:"total_tokens"`
-	CostUSD     float64   `json:"cost_usd"`
-	Timestamp   time.Time `json:"timestamp"`
+	Tool         string    `json:"tool"`
+	InputTokens  int       `json:"input_tokens"`
+	OutputTokens int       `json:"output_tokens"`
+	TotalTokens  int       `json:"total_tokens"`
+	CostUSD      float64   `json:"cost_usd"`
+	Timestamp    time.Time `json:"timestamp"`
 }
 
 // TokenMetrics holds the cumulative token usage since server startup.

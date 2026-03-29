@@ -49,13 +49,13 @@ var (
 
 // parsedArgs holds the result of command-line argument parsing.
 type parsedArgs struct {
-	action       string // "", "version", "help", "print-config", "validate-config"
-	configPath   string // path from --config or --config=
-	validatePath string // path for --validate-config
-	silent       bool   // --silent or -s: suppress INFO/WARN logs
-	daemon       bool   // --daemon: fork to background (HTTP mode)
-	tokenCardFlag bool  // --token-card: enable live token monitoring UI
-	err          error  // parsing error (e.g., unknown flag)
+	action        string // "", "version", "help", "print-config", "validate-config"
+	configPath    string // path from --config or --config=
+	validatePath  string // path for --validate-config
+	silent        bool   // --silent or -s: suppress INFO/WARN logs
+	daemon        bool   // --daemon: fork to background (HTTP mode)
+	tokenCardFlag bool   // --token-card: enable live token monitoring UI
+	err           error  // parsing error (e.g., unknown flag)
 }
 
 // parseArgs parses command-line arguments and returns the result.
