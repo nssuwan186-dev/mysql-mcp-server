@@ -71,6 +71,7 @@ type FilePoolConfig struct {
 type FileFeatureConfig struct {
 	ExtendedTools bool `yaml:"extended_tools" json:"extended_tools"`
 	VectorTools   bool `yaml:"vector_tools" json:"vector_tools"`
+	TokenCard     bool `yaml:"token_card" json:"token_card"`
 }
 
 // FileLoggingConfig represents logging settings in the config file.
@@ -258,6 +259,7 @@ func (fc *FileConfig) ToConfig() *Config {
 
 	cfg.ExtendedMode = fc.Features.ExtendedTools
 	cfg.VectorMode = fc.Features.VectorTools
+	cfg.TokenCard = fc.Features.TokenCard
 
 	cfg.JSONLogging = fc.Logging.JSONFormat
 	cfg.AuditLogPath = fc.Logging.AuditLogPath
@@ -344,6 +346,7 @@ func PrintConfig(cfg *Config) string {
 		Features: FileFeatureConfig{
 			ExtendedTools: cfg.ExtendedMode,
 			VectorTools:   cfg.VectorMode,
+			TokenCard:     cfg.TokenCard,
 		},
 		Logging: FileLoggingConfig{
 			JSONFormat:    cfg.JSONLogging,

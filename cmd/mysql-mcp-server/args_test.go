@@ -8,15 +8,16 @@ import (
 
 func TestParseArgs(t *testing.T) {
 	tests := []struct {
-		name           string
-		args           []string
-		wantAction     string
-		wantConfigPath string
-		wantValidPath  string
-		wantSilent     bool
-		wantDaemon     bool
-		wantErr        bool
-		errContains    string
+		name              string
+		args              []string
+		wantAction        string
+		wantConfigPath    string
+		wantValidPath     string
+		wantSilent        bool
+		wantDaemon        bool
+		wantTokenCardFlag bool
+		wantErr           bool
+		errContains       string
 	}{
 		// Basic flags
 		{
@@ -114,6 +115,11 @@ func TestParseArgs(t *testing.T) {
 			name:       "daemon short flag",
 			args:       []string{"-d"},
 			wantDaemon: true,
+		},
+		{
+			name:              "token-card flag",
+			args:              []string{"--token-card"},
+			wantTokenCardFlag: true,
 		},
 		{
 			name:           "silent and config",
@@ -223,11 +229,14 @@ func TestParseArgs(t *testing.T) {
 			if result.daemon != tt.wantDaemon {
 				t.Errorf("parseArgs() daemon = %v, want %v", result.daemon, tt.wantDaemon)
 			}
+			if result.tokenCardFlag != tt.wantTokenCardFlag {
+				t.Errorf("parseArgs() tokenCardFlag = %v, want %v", result.tokenCardFlag, tt.wantTokenCardFlag)
+			}
 		})
 	}
 }
 
-// TestPrintHelpContainsSilentAndDaemon ensures the help text documents --silent and --daemon.
+// TestPrintHelpContainsSilentAndDaemon ensures the help text documents --silent, --daemon, and --token-card.
 func TestPrintHelpContainsSilentAndDaemon(t *testing.T) {
 	old := os.Stdout
 	r, w, _ := os.Pipe()
@@ -238,12 +247,12 @@ func TestPrintHelpContainsSilentAndDaemon(t *testing.T) {
 	var buf bytes.Buffer
 	buf.ReadFrom(r)
 	help := buf.String()
-	if !contains(help, "--silent") || !contains(help, "--daemon") {
+	if !contains(help, "--silent") || !contains(help, "--daemon") || !contains(help, "--token-card") {
 		excerpt := help
 		if len(excerpt) > 200 {
 			excerpt = excerpt[:200]
 		}
-		t.Errorf("help text should contain --silent and --daemon; got (excerpt): %s", excerpt)
+		t.Errorf("help text should contain --silent, --daemon, and --token-card; got (excerpt): %s", excerpt)
 	}
 }
 

@@ -454,6 +454,11 @@ func toolRunQuery(
 	tokens.OutputEstimated = outputTokens
 	tokens.TotalEstimated = inputTokens + outputTokens
 
+	// Record into global metrics aggregator (when token tracking enabled)
+	if tokenTracking {
+		globalTokenMetrics.Record("run_query", inputTokens, outputTokens)
+	}
+
 	// Calculate efficiency metrics
 	eff := CalculateEfficiency(inputTokens, outputTokens, len(out.Rows))
 

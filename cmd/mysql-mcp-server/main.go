@@ -37,6 +37,7 @@ var (
 	extendedMode   bool
 	jsonLogging    bool
 	tokenTracking  bool
+	tokenCard      bool
 	tokenModel     string
 	tokenEstimator TokenEstimator
 
@@ -48,12 +49,13 @@ var (
 
 // parsedArgs holds the result of command-line argument parsing.
 type parsedArgs struct {
-	action       string // "", "version", "help", "print-config", "validate-config"
-	configPath   string // path from --config or --config=
-	validatePath string // path for --validate-config
-	silent       bool   // --silent or -s: suppress INFO/WARN logs
-	daemon       bool   // --daemon: fork to background (HTTP mode)
-	err          error  // parsing error (e.g., unknown flag)
+	action        string // "", "version", "help", "print-config", "validate-config"
+	configPath    string // path from --config or --config=
+	validatePath  string // path for --validate-config
+	silent        bool   // --silent or -s: suppress INFO/WARN logs
+	daemon        bool   // --daemon: fork to background (HTTP mode)
+	tokenCardFlag bool   // --token-card: enable live token monitoring UI
+	err           error  // parsing error (e.g., unknown flag)
 }
 
 // parseArgs parses command-line arguments and returns the result.
@@ -93,6 +95,8 @@ func parseArgs(args []string) parsedArgs {
 			result.silent = true
 		case "--daemon", "-d":
 			result.daemon = true
+		case "--token-card":
+			result.tokenCardFlag = true
 		default:
 			// Check if it's --config=path format
 			if len(arg) > 9 && arg[:9] == "--config=" {
@@ -169,6 +173,8 @@ func main() {
 	jsonLogging = cfg.JSONLogging
 	tokenTracking = cfg.TokenTracking
 	tokenModel = cfg.TokenModel
+	// CLI --token-card overrides config (OR with config value)
+	tokenCard = cfg.TokenCard || parsed.tokenCardFlag
 
 	// Initialize audit logger
 	auditLogger, err = NewAuditLogger(cfg.AuditLogPath)
@@ -229,6 +235,7 @@ func main() {
 		"jsonLogging":      jsonLogging,
 		"auditLogEnabled":  auditLogger.enabled,
 		"tokenTracking":    tokenTracking,
+		"tokenCard":        tokenCard,
 		"tokenModel":       tokenModel,
 		"connections":      len(cfg.Connections),
 		"activeConnection": activeName,
@@ -236,7 +243,7 @@ func main() {
 
 	// If HTTP mode is enabled, start REST API server instead of MCP
 	if cfg.HTTPMode {
-		startHTTPServer(cfg.HTTPPort, cfg.VectorMode)
+		startHTTPServer(cfg.HTTPPort, cfg.VectorMode, tokenCard)
 		return
 	}
 
@@ -438,6 +445,7 @@ OPTIONS:
     -c, --config PATH           Use config file at PATH
     -s, --silent                Suppress INFO and WARN logs (ERROR still printed)
     -d, --daemon                Run in background (fork and detach; use with MYSQL_MCP_HTTP=1)
+    --token-card                Enable live token monitoring UI at /status (HTTP mode)
     --print-config              Print current configuration as YAML
     --validate-config PATH      Validate config file at PATH
 
@@ -466,6 +474,7 @@ CONFIGURATION:
         MYSQL_MCP_JSON_LOGS          Enable JSON structured logging (set to 1)
         MYSQL_MCP_TOKEN_TRACKING     Enable token usage estimation (set to 1)
         MYSQL_MCP_TOKEN_MODEL        Tokenizer encoding to use (default: cl100k_base)
+        MYSQL_MCP_TOKEN_CARD         Enable live token monitoring UI at /status (set to 1, HTTP mode)
         MYSQL_MCP_AUDIT_LOG          Path to audit log file
         MYSQL_MCP_VECTOR             Enable vector tools for MySQL 9.0+ (set to 1)
         MYSQL_MCP_HTTP               Enable REST API mode (set to 1)

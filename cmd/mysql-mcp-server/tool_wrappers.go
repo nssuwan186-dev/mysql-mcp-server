@@ -27,6 +27,9 @@ func wrapTool[I any, O any](toolName string, h mcp.ToolHandlerFor[I, O]) mcp.Too
 				Model:           tokenModel,
 			}
 
+			// Record into the global metrics aggregator
+			globalTokenMetrics.Record(toolName, inputTokens, outputTokens)
+
 			fields := map[string]interface{}{
 				"tool":        toolName,
 				"duration_ms": time.Since(start).Milliseconds(),

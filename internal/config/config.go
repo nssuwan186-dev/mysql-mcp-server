@@ -64,6 +64,7 @@ type Config struct {
 	VectorMode   bool
 	HTTPMode     bool
 	JSONLogging  bool
+	TokenCard    bool // Enable live monitoring UI at /status
 
 	// Token estimation (optional, disabled by default)
 	TokenTracking bool
@@ -181,6 +182,9 @@ func applyEnvOverrides(cfg *Config) {
 	}
 	if v := os.Getenv("MYSQL_MCP_TOKEN_MODEL"); v != "" {
 		cfg.TokenModel = strings.TrimSpace(v)
+	}
+	if v := os.Getenv("MYSQL_MCP_TOKEN_CARD"); v != "" {
+		cfg.TokenCard = getEnvBool("MYSQL_MCP_TOKEN_CARD")
 	}
 	if v := os.Getenv("MYSQL_HTTP_PORT"); v != "" {
 		cfg.HTTPPort = getEnvInt("MYSQL_HTTP_PORT", cfg.HTTPPort)
