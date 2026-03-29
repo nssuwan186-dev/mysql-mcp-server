@@ -175,6 +175,36 @@ func TestRunQueryMaxRowsExceedsConfig(t *testing.T) {
 	}
 }
 
+// Regression: negative cfg.MaxRows must not make make(..., 0, maxRows) panic (Codex P2).
+func TestRunQueryClampsNegativeClientMaxRows(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock: %v", err)
+	}
+	client, err := NewWithDB(db, Config{MaxRows: -1, QueryTimeoutS: 5})
+	if err != nil {
+		t.Fatalf("NewWithDB: %v", err)
+	}
+
+	rows := sqlmock.NewRows([]string{"id"}).AddRow(1).AddRow(2)
+	mock.ExpectQuery("SELECT 1").WillReturnRows(rows)
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+
+	out, err := client.RunQuery(ctx, "SELECT 1", 10)
+	if err != nil {
+		t.Fatalf("RunQuery: %v", err)
+	}
+	if len(out) != 0 {
+		t.Fatalf("expected 0 rows with effective maxRows 0 after negative clamp, got %d", len(out))
+	}
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet expectations: %v", err)
+	}
+}
+
 func TestRunQueryQueryError(t *testing.T) {
 	client, mock := newTestClient(t)
 

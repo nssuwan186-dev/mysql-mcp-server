@@ -191,7 +191,71 @@ func toolExplainQuery(
 		out.Plan = append(out.Plan, row)
 	}
 
+	out.Warnings = analyzeExplainPlan(out.Plan)
+
 	return nil, out, nil
+}
+
+// analyzeExplainPlan inspects a traditional EXPLAIN plan and returns actionable
+// optimization suggestions. It checks for full-table scans, unused indexes,
+// filesort, and temporary-table operations.
+func analyzeExplainPlan(plan []map[string]interface{}) []string {
+	var warnings []string
+
+	isNullLike := func(s string) bool {
+		return s == "" || s == "<nil>" || strings.EqualFold(s, "null")
+	}
+
+	for _, row := range plan {
+		table := fmt.Sprintf("%v", row["table"])
+		accessType := strings.ToUpper(fmt.Sprintf("%v", row["type"]))
+		// Missing type becomes "<NIL>" after fmt + ToUpper; do not treat as a known access type.
+		accessTypeKnown := accessType != "" && !strings.EqualFold(accessType, "<nil>")
+		key := fmt.Sprintf("%v", row["key"])
+		possibleKeys := fmt.Sprintf("%v", row["possible_keys"])
+		extra := strings.ToLower(fmt.Sprintf("%v", row["Extra"]))
+
+		// Full table scan
+		if accessType == "ALL" {
+			if isNullLike(possibleKeys) {
+				warnings = append(warnings, fmt.Sprintf(
+					"Table '%s': full table scan with no candidate indexes — consider adding an index on the columns used in WHERE/JOIN conditions.",
+					table,
+				))
+			} else {
+				warnings = append(warnings, fmt.Sprintf(
+					"Table '%s': full table scan despite candidate indexes (%s) — verify the WHERE clause matches the index prefix and that column types align.",
+					table, possibleKeys,
+				))
+			}
+		}
+
+		// Index available but not used (requires a known non-ALL access type)
+		if isNullLike(key) && !isNullLike(possibleKeys) && accessType != "ALL" && accessTypeKnown {
+			warnings = append(warnings, fmt.Sprintf(
+				"Table '%s': indexes (%s) are available but none were chosen — check for type mismatches or functions wrapping indexed columns.",
+				table, possibleKeys,
+			))
+		}
+
+		// Filesort
+		if strings.Contains(extra, "using filesort") {
+			warnings = append(warnings, fmt.Sprintf(
+				"Table '%s': filesort required — consider a composite index whose column order matches your ORDER BY clause.",
+				table,
+			))
+		}
+
+		// Temporary table
+		if strings.Contains(extra, "using temporary") {
+			warnings = append(warnings, fmt.Sprintf(
+				"Table '%s': temporary table created — consider an index covering the columns used in GROUP BY or DISTINCT.",
+				table,
+			))
+		}
+	}
+
+	return warnings
 }
 
 func toolListViews(

@@ -4,6 +4,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -1065,4 +1066,209 @@ func TestToolVectorInfoMissingDatabase(t *testing.T) {
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Errorf("unfulfilled expectations: %v", err)
 	}
+}
+
+// ===== analyzeExplainPlan Tests =====
+
+func TestAnalyzeExplainPlanFullTableScanNoIndexes(t *testing.T) {
+	plan := []map[string]interface{}{
+		{
+			"table":         "orders",
+			"type":          "ALL",
+			"possible_keys": nil,
+			"key":           nil,
+			"Extra":         "",
+		},
+	}
+	warnings := analyzeExplainPlan(plan)
+	if len(warnings) == 0 {
+		t.Fatal("expected at least one warning for full table scan")
+	}
+	found := false
+	for _, w := range warnings {
+		if containsCI(w, "full table scan") && containsCI(w, "orders") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected full-table-scan warning for table 'orders', got: %v", warnings)
+	}
+}
+
+func TestAnalyzeExplainPlanFullTableScanWithCandidateIndexes(t *testing.T) {
+	plan := []map[string]interface{}{
+		{
+			"table":         "users",
+			"type":          "ALL",
+			"possible_keys": "idx_email,idx_name",
+			"key":           nil,
+			"Extra":         "",
+		},
+	}
+	warnings := analyzeExplainPlan(plan)
+	if len(warnings) == 0 {
+		t.Fatal("expected at least one warning")
+	}
+	found := false
+	for _, w := range warnings {
+		if containsCI(w, "full table scan") && containsCI(w, "idx_email") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected full-table-scan warning mentioning candidate indexes, got: %v", warnings)
+	}
+}
+
+func TestAnalyzeExplainPlanIndexAvailableButUnused(t *testing.T) {
+	plan := []map[string]interface{}{
+		{
+			"table":         "products",
+			"type":          "ref",
+			"possible_keys": "idx_category",
+			"key":           nil,
+			"Extra":         "",
+		},
+	}
+	warnings := analyzeExplainPlan(plan)
+	if len(warnings) == 0 {
+		t.Fatal("expected at least one warning for unused index")
+	}
+	found := false
+	for _, w := range warnings {
+		if containsCI(w, "idx_category") && containsCI(w, "none were chosen") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected unused-index warning, got: %v", warnings)
+	}
+}
+
+func TestAnalyzeExplainPlanNoUnusedIndexWarningWhenAccessTypeMissing(t *testing.T) {
+	plan := []map[string]interface{}{
+		{
+			"table":         "products",
+			"type":          nil,
+			"possible_keys": "idx_category",
+			"key":           nil,
+			"Extra":         "",
+		},
+	}
+	warnings := analyzeExplainPlan(plan)
+	for _, w := range warnings {
+		if containsCI(w, "none were chosen") {
+			t.Fatalf("did not expect unused-index warning when access type is unknown, got: %v", warnings)
+		}
+	}
+}
+
+func TestAnalyzeExplainPlanFilesort(t *testing.T) {
+	plan := []map[string]interface{}{
+		{
+			"table":         "orders",
+			"type":          "index",
+			"possible_keys": nil,
+			"key":           "PRIMARY",
+			"Extra":         "Using filesort",
+		},
+	}
+	warnings := analyzeExplainPlan(plan)
+	if len(warnings) == 0 {
+		t.Fatal("expected filesort warning")
+	}
+	found := false
+	for _, w := range warnings {
+		if containsCI(w, "filesort") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected filesort warning, got: %v", warnings)
+	}
+}
+
+func TestAnalyzeExplainPlanTemporaryTable(t *testing.T) {
+	plan := []map[string]interface{}{
+		{
+			"table":         "sales",
+			"type":          "ALL",
+			"possible_keys": nil,
+			"key":           nil,
+			"Extra":         "Using temporary; Using filesort",
+		},
+	}
+	warnings := analyzeExplainPlan(plan)
+	foundTmp := false
+	foundSort := false
+	for _, w := range warnings {
+		if containsCI(w, "temporary table") {
+			foundTmp = true
+		}
+		if containsCI(w, "filesort") {
+			foundSort = true
+		}
+	}
+	if !foundTmp {
+		t.Errorf("expected temporary-table warning, got: %v", warnings)
+	}
+	if !foundSort {
+		t.Errorf("expected filesort warning, got: %v", warnings)
+	}
+}
+
+func TestAnalyzeExplainPlanGoodPlan(t *testing.T) {
+	// A plan using a specific key with no problematic extras should produce no warnings.
+	plan := []map[string]interface{}{
+		{
+			"table":         "users",
+			"type":          "ref",
+			"possible_keys": "idx_email",
+			"key":           "idx_email",
+			"Extra":         "Using index",
+		},
+	}
+	warnings := analyzeExplainPlan(plan)
+	if len(warnings) != 0 {
+		t.Errorf("expected no warnings for efficient plan, got: %v", warnings)
+	}
+}
+
+func TestToolExplainQueryWarningsPopulated(t *testing.T) {
+	mock, cleanup := setupExtendedMockDB(t)
+	defer cleanup()
+
+	// Simulate a full-table scan plan row
+	rows := sqlmock.NewRows([]string{"id", "select_type", "table", "type", "possible_keys", "key", "key_len", "ref", "rows", "Extra"}).
+		AddRow(1, "SIMPLE", "orders", "ALL", nil, nil, nil, nil, 5000, "")
+
+	mock.ExpectQuery("EXPLAIN SELECT \\* FROM orders").WillReturnRows(rows)
+
+	ctx := context.Background()
+	_, output, err := toolExplainQuery(ctx, &mcp.CallToolRequest{}, ExplainQueryInput{
+		SQL: "SELECT * FROM orders",
+	})
+
+	if err != nil {
+		t.Fatalf("toolExplainQuery failed: %v", err)
+	}
+	if len(output.Plan) == 0 {
+		t.Error("expected non-empty plan")
+	}
+	if len(output.Warnings) == 0 {
+		t.Error("expected warnings for full table scan plan")
+	}
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Errorf("unfulfilled expectations: %v", err)
+	}
+}
+
+// containsCI is a case-insensitive substring check helper for test assertions.
+func containsCI(s, substr string) bool {
+	return strings.Contains(strings.ToLower(s), strings.ToLower(substr))
 }
