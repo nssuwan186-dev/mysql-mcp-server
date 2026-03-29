@@ -911,6 +911,26 @@ func TestToolServerInfoFallback(t *testing.T) {
 
 // ===== Tests for performance improvement features =====
 
+// Regression: negative MYSQL_MAX_ROWS / maxRows must not panic on slice prealloc (Codex P2).
+func TestToolRunQueryNegativeMaxRowsDoesNotPanic(t *testing.T) {
+	mock, cleanup := setupMockDB(t)
+	defer cleanup()
+
+	oldMaxRows := maxRows
+	maxRows = -1
+	defer func() { maxRows = oldMaxRows }()
+
+	mock.ExpectQuery("SELECT id FROM t").WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(1))
+
+	ctx := context.Background()
+	_, _, err := toolRunQuery(ctx, &mcp.CallToolRequest{}, RunQueryInput{
+		SQL: "SELECT id FROM t",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 func TestToolRunQueryTruncatedFlag(t *testing.T) {
 	mock, cleanup := setupMockDB(t)
 	defer cleanup()

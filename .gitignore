@@ -19,3 +19,7 @@ CODE_REVIEW.md
 *_review.md
 REVIEW*.md
 review*.md
+
+# Local worktrees / stray clone dirs (never commit)
+.worktrees/
+mysql-mcp-server

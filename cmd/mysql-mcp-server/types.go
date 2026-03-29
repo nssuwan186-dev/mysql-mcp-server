@@ -187,7 +187,8 @@ type ExplainQueryInput struct {
 }
 
 type ExplainQueryOutput struct {
-	Plan []map[string]interface{} `json:"plan" jsonschema:"query execution plan"`
+	Plan     []map[string]interface{} `json:"plan" jsonschema:"query execution plan"`
+	Warnings []string                 `json:"warnings,omitempty" jsonschema:"actionable optimization suggestions derived from the execution plan"`
 }
 
 type ListViewsInput struct {

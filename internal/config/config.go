@@ -35,11 +35,11 @@ type SSHConfig struct {
 
 // ConnectionConfig represents a single MySQL connection configuration.
 type ConnectionConfig struct {
-	Name        string    `json:"name"`
-	DSN         string    `json:"dsn"`
-	Description string    `json:"description,omitempty"`
-	ReadOnly    bool      `json:"read_only,omitempty"`
-	SSL         string    `json:"ssl,omitempty"` // "true", "false", "skip-verify", or empty (use DSN as-is)
+	Name        string     `json:"name"`
+	DSN         string     `json:"dsn"`
+	Description string     `json:"description,omitempty"`
+	ReadOnly    bool       `json:"read_only,omitempty"`
+	SSL         string     `json:"ssl,omitempty"` // "true", "false", "skip-verify", or empty (use DSN as-is)
 	SSH         *SSHConfig `json:"ssh,omitempty"` // optional SSH tunnel (bastion)
 }
 
