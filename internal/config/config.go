@@ -35,11 +35,11 @@ type SSHConfig struct {
 
 // ConnectionConfig represents a single MySQL connection configuration.
 type ConnectionConfig struct {
-	Name        string    `json:"name"`
-	DSN         string    `json:"dsn"`
-	Description string    `json:"description,omitempty"`
-	ReadOnly    bool      `json:"read_only,omitempty"`
-	SSL         string    `json:"ssl,omitempty"` // "true", "false", "skip-verify", or empty (use DSN as-is)
+	Name        string     `json:"name"`
+	DSN         string     `json:"dsn"`
+	Description string     `json:"description,omitempty"`
+	ReadOnly    bool       `json:"read_only,omitempty"`
+	SSL         string     `json:"ssl,omitempty"` // "true", "false", "skip-verify", or empty (use DSN as-is)
 	SSH         *SSHConfig `json:"ssh,omitempty"` // optional SSH tunnel (bastion)
 }
 
@@ -139,11 +139,19 @@ func applyEnvOverrides(cfg *Config) {
 	if v := os.Getenv("MYSQL_MAX_ROWS"); v != "" {
 		cfg.MaxRows = getEnvInt("MYSQL_MAX_ROWS", cfg.MaxRows)
 	}
+	// MYSQL_QUERY_TIMEOUT_SECONDS takes precedence over MYSQL_QUERY_TIMEOUT (ms).
 	if v := os.Getenv("MYSQL_QUERY_TIMEOUT_SECONDS"); v != "" {
 		cfg.QueryTimeout = time.Duration(getEnvInt("MYSQL_QUERY_TIMEOUT_SECONDS", int(cfg.QueryTimeout.Seconds()))) * time.Second
+	} else if v := os.Getenv("MYSQL_QUERY_TIMEOUT"); v != "" {
+		// MYSQL_QUERY_TIMEOUT accepts a value in milliseconds (e.g. 30000 for 30 s).
+		cfg.QueryTimeout = time.Duration(getEnvInt("MYSQL_QUERY_TIMEOUT", int(cfg.QueryTimeout.Milliseconds()))) * time.Millisecond
 	}
+	// MYSQL_MAX_OPEN_CONNS takes precedence over MYSQL_POOL_SIZE.
 	if v := os.Getenv("MYSQL_MAX_OPEN_CONNS"); v != "" {
 		cfg.MaxOpenConns = getEnvInt("MYSQL_MAX_OPEN_CONNS", cfg.MaxOpenConns)
+	} else if v := os.Getenv("MYSQL_POOL_SIZE"); v != "" {
+		// MYSQL_POOL_SIZE is an alias for MYSQL_MAX_OPEN_CONNS.
+		cfg.MaxOpenConns = getEnvInt("MYSQL_POOL_SIZE", cfg.MaxOpenConns)
 	}
 	if v := os.Getenv("MYSQL_MAX_IDLE_CONNS"); v != "" {
 		cfg.MaxIdleConns = getEnvInt("MYSQL_MAX_IDLE_CONNS", cfg.MaxIdleConns)

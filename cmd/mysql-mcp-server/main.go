@@ -297,8 +297,13 @@ func registerCoreTools(server *mcp.Server) {
 	}, toolDescribeTableWrapped)
 
 	mcp.AddTool(server, &mcp.Tool{
-		Name:        "run_query",
-		Description: "Execute a read-only SQL query (SELECT/SHOW/DESCRIBE/EXPLAIN only). For complex queries, you MUST apply MySQL Query Optimization guidelines (e.g., filter early, use indexed columns without functions, use EXPLAIN) before executing.",
+		Name: "run_query",
+		Description: "Execute a read-only SQL query (SELECT/SHOW/DESCRIBE/EXPLAIN only). " +
+			"IMPORTANT: Always specify only the columns you need instead of SELECT * to reduce " +
+			"payload size and improve performance. Results are automatically capped at the " +
+			"configured row limit (default: 200 rows); include a LIMIT clause in your query " +
+			"to request fewer rows. Apply MySQL optimization guidelines (e.g., filter early, " +
+			"use indexed columns, avoid functions on indexed columns, use EXPLAIN) before executing.",
 	}, toolRunQueryWrapped)
 
 	mcp.AddTool(server, &mcp.Tool{
@@ -462,8 +467,9 @@ CONFIGURATION:
         MYSQL_DSN                    MySQL DSN (e.g., user:pass@tcp(localhost:3306)/db)
 
     Optional:
-        MYSQL_MAX_ROWS               Max rows returned (default: 200)
+        MYSQL_MAX_ROWS               Max rows returned per query (default: 200)
         MYSQL_QUERY_TIMEOUT_SECONDS  Query timeout in seconds (default: 30)
+        MYSQL_QUERY_TIMEOUT          Query timeout in milliseconds (e.g. 30000); overridden by MYSQL_QUERY_TIMEOUT_SECONDS
         MYSQL_MCP_EXTENDED           Enable extended tools (set to 1)
         MYSQL_MCP_JSON_LOGS          Enable JSON structured logging (set to 1)
         MYSQL_MCP_TOKEN_TRACKING     Enable token usage estimation (set to 1)
@@ -476,7 +482,8 @@ CONFIGURATION:
         MYSQL_HTTP_RATE_LIMIT        Enable rate limiting for HTTP mode (set to 1)
         MYSQL_HTTP_RATE_LIMIT_RPS    Rate limit: requests per second (default: 100)
         MYSQL_HTTP_RATE_LIMIT_BURST  Rate limit: burst size (default: 200)
-        MYSQL_MAX_OPEN_CONNS         Max open database connections (default: 10)
+        MYSQL_POOL_SIZE              Connection pool size / max open connections (default: 10); alias for MYSQL_MAX_OPEN_CONNS
+        MYSQL_MAX_OPEN_CONNS         Max open database connections (default: 10); overrides MYSQL_POOL_SIZE
         MYSQL_MAX_IDLE_CONNS         Max idle database connections (default: 5)
         MYSQL_CONN_MAX_LIFETIME_MINUTES  Connection max lifetime in minutes (default: 30)
 

@@ -9,10 +9,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/go-sql-driver/mysql"
 	"github.com/askdba/mysql-mcp-server/internal/config"
 	"github.com/askdba/mysql-mcp-server/internal/sshtunnel"
 	"github.com/askdba/mysql-mcp-server/internal/util"
+	"github.com/go-sql-driver/mysql"
 )
 
 // ServerType represents the type of the database server.

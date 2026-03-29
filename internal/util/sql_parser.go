@@ -347,3 +347,69 @@ func ValidateSQLCombined(sqlText string) error {
 
 	return nil
 }
+
+// InjectLimit rewrites a SELECT statement to add a LIMIT clause when none is
+// present and the row cap would otherwise be enforced only on the client side.
+// Non-SELECT statements (SHOW, DESCRIBE, EXPLAIN, …) are returned unchanged.
+// If the SQL cannot be parsed it is also returned unchanged so that the
+// existing validation layer can produce a meaningful error later.
+// The original SQL text is preserved (only a LIMIT suffix is appended).
+func InjectLimit(sqlText string, limit int) string {
+	if limit <= 0 {
+		return sqlText
+	}
+
+	trimmed := strings.TrimSpace(sqlText)
+	stmt, err := sqlparser.Parse(trimmed)
+	if err != nil {
+		return sqlText
+	}
+
+	var hasLimit bool
+	switch s := stmt.(type) {
+	case *sqlparser.Select:
+		hasLimit = s.Limit != nil
+	case *sqlparser.Union:
+		hasLimit = s.Limit != nil
+	default:
+		// Not a SELECT/UNION - no LIMIT injection needed.
+		return sqlText
+	}
+
+	if hasLimit {
+		return sqlText
+	}
+
+	// Strip trailing semicolons, then append the LIMIT clause.
+	// This preserves the original SQL formatting (e.g., capitalization).
+	base := strings.TrimRight(strings.TrimSpace(trimmed), ";")
+	return fmt.Sprintf("%s LIMIT %d", base, limit)
+}
+
+// HasSelectStar reports whether the SQL statement selects all columns with a
+// bare "*" wildcard (e.g. SELECT * or SELECT t.*).  Non-SELECT statements and
+// statements that cannot be parsed always return false.
+func HasSelectStar(sqlText string) bool {
+	stmt, err := sqlparser.Parse(strings.TrimSpace(sqlText))
+	if err != nil {
+		return false
+	}
+	return selectHasStar(stmt)
+}
+
+// selectHasStar recursively checks parsed statements for star expressions.
+func selectHasStar(stmt sqlparser.Statement) bool {
+	switch s := stmt.(type) {
+	case *sqlparser.Select:
+		for _, expr := range s.SelectExprs {
+			if _, ok := expr.(*sqlparser.StarExpr); ok {
+				return true
+			}
+		}
+	case *sqlparser.Union:
+		return selectHasStar(s.Left) || selectHasStar(s.Right)
+	case *sqlparser.ParenSelect:
+		return selectHasStar(s.Select)
+	}
+	return false
+}
