@@ -7,11 +7,37 @@ Semantic Versioning.
 
 ## [Unreleased]
 
+## [1.7.0-rc.1] - 2026-03-29
+
+Release candidate: performance, observability, metadata discovery, and HTTP token dashboard. See [docs/releasing.md](docs/releasing.md) for tagging; GA will be **v1.7.0** after validation.
+
 ### Added
-- Comprehensive MySQL Query Optimization Guide (`docs/mysql_query_optimization_comprehensive.md`) detailing optimizer statistics, advanced indexing, query plan analysis, and operational best practices (#92).
+
+- **Live token monitoring (HTTP mode)** ([#96](https://github.com/askdba/mysql-mcp-server/pull/96), closes [#83](https://github.com/askdba/mysql-mcp-server/issues/83)): in-process `TokenMetrics`, **`GET /api/metrics/tokens`**, optional **`GET /status`** dashboard (auto-refresh). Enable with **`MYSQL_MCP_TOKEN_CARD=1`**, **`--token-card`**, or **`features.token_card: true`** in config.
+- **Query performance & payload controls** ([#101](https://github.com/askdba/mysql-mcp-server/pull/101), [#100](https://github.com/askdba/mysql-mcp-server/issues/100)): env aliases **`MYSQL_POOL_SIZE`** (→ max open conns) and **`MYSQL_QUERY_TIMEOUT`** (milliseconds; `MYSQL_QUERY_TIMEOUT_SECONDS` wins when set); server-side **`LIMIT`** injection for `SELECT`/`UNION`; **`truncated`** and **`warning`** on `run_query` results (`SELECT *` hint); improved `run_query` tool description.
+- **EXPLAIN guidance** ([#98](https://github.com/askdba/mysql-mcp-server/pull/98), [#82](https://github.com/askdba/mysql-mcp-server/issues/82)): `explain_query` returns **`warnings`** from plan analysis; pre-allocated result slices; clamp negative **`maxRows`** before allocation (Codex review).
+- **Status & variables** ([#97](https://github.com/askdba/mysql-mcp-server/issues/97)): **`list_status`** / **`list_variables`** use **`performance_schema.global_status`** / **`global_variables`** when possible, with **`SHOW GLOBAL STATUS` / `SHOW GLOBAL VARIABLES`** fallback.
+- **`test-steps.md`**: Sakila multi-version matrix with **`wait_docker_healthy`** / **`wait_mysqladmin_ping`** helpers and `<repo-root>` placeholder.
+
+### Changed
+
+- **`explain_query`**: safer “unused index” warning when access `type` is unknown (avoids false positives on `<NIL>`).
+- **`.gitignore`**: root-only **`/mysql-mcp-server`** and **`/.worktrees/`** so **`cmd/mysql-mcp-server`** is not ignored.
 
 ### Fixed
-- MariaDB job result missing from QA pipeline summary output in GitHub Actions (#92).
+
+- **`truncated`**: set only when a row exists beyond the row cap (not when the result size exactly equals the limit).
+
+### Documentation
+
+- README: env vars, REST endpoints, performance tuning, Sakila test references aligned with this RC.
+- Comprehensive MySQL Query Optimization Guide: [`docs/mysql_query_optimization_comprehensive.md`](docs/mysql_query_optimization_comprehensive.md) ([#92](https://github.com/askdba/mysql-mcp-server/pull/92)).
+
+### CI
+
+- MariaDB job result included in QA pipeline summary output ([#92](https://github.com/askdba/mysql-mcp-server/pull/92)).
+
+---
 
 ## v1.6.0 - 2026-02-10
 ### Added

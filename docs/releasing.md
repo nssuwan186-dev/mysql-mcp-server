@@ -2,6 +2,18 @@
 
 Releases are automated via GitHub Actions and GoReleaser. This doc is the full checklist for maintainers.
 
+## Release candidates
+
+- Tag format: **`v1.7.0-rc.1`**, **`v1.7.0-rc.2`**, etc. (semver pre-release after the patch segment).
+- Update **`CHANGELOG.md`** with an **`[1.7.0-rc.N] - date`** section (see existing **[Unreleased]** / RC headings).
+- **`goreleaser`** `release.prerelease: auto` marks GitHub Releases as **pre-release** when the tag indicates an RC.
+- After validation, ship **GA** as **`v1.7.0`** (or merge RC notes into **`v1.7.0 - date`** per section below).
+
+```bash
+git tag -a v1.7.0-rc.1 -m "Release candidate v1.7.0-rc.1"
+git push origin v1.7.0-rc.1
+```
+
 ## Pre-release
 
 1. **Update CHANGELOG**

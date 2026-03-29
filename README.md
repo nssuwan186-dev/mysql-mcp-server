@@ -3,7 +3,7 @@
 <div align="center">
   <img src="./MysqlMCPServerBanner.png" alt="MySQL MCP Server Banner" width="800"/>
   
-  [![Version](https://img.shields.io/badge/version-1.6.0-blue.svg)](https://github.com/askdba/mysql-mcp-server/releases)
+  [![Version](https://img.shields.io/badge/version-1.7.0--rc.1-blue.svg)](https://github.com/askdba/mysql-mcp-server/releases)
   [![Go](https://img.shields.io/badge/go-1.24+-00ADD8.svg)](https://golang.org/)
   [![License](https://img.shields.io/badge/license-Apache--2.0-green.svg)](LICENSE)
 </div>
@@ -25,7 +25,8 @@ This project exposes safe MySQL introspection tools to Claude Desktop via MCP. C
   - list_connections, use_connection (multi-DSN)
   - vector_search, vector_info (MySQL 9.0+)
 - Supports MySQL 8.0, 8.4, 9.0+ and MariaDB 10.x, 11.x
-- Query timeouts, structured logging, audit logs
+- Query timeouts, structured logging, audit logs; optional **live token metrics** and **`/status`** dashboard in HTTP mode
+- **Performance**: configurable pool/query timeouts, server-side row caps, `explain_query` plan warnings
 - Single Go binary
 - Unit and integration tests (Testcontainers)
 - Native integration with Claude Desktop MCP
@@ -108,12 +109,15 @@ Environment variables:
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
 | MYSQL_DSN | Yes | – | MySQL DSN |
-| MYSQL_MAX_ROWS | No | 200 | Max rows returned |
-| MYSQL_QUERY_TIMEOUT_SECONDS | No | 30 | Query timeout |
+| MYSQL_MAX_ROWS | No | 200 | Max rows returned per query |
+| MYSQL_QUERY_TIMEOUT_SECONDS | No | 30 | Query timeout (seconds); wins over `MYSQL_QUERY_TIMEOUT` when both are set |
+| MYSQL_QUERY_TIMEOUT | No | – | Query timeout in **milliseconds** (e.g. `30000`); used only if `MYSQL_QUERY_TIMEOUT_SECONDS` is unset |
+| MYSQL_POOL_SIZE | No | – | Alias for `MYSQL_MAX_OPEN_CONNS` (pool size); `MYSQL_MAX_OPEN_CONNS` overrides when both are set |
 | MYSQL_MCP_EXTENDED | No | 0 | Enable extended tools (set to 1) |
 | MYSQL_MCP_JSON_LOGS | No | 0 | Enable JSON structured logging (set to 1) |
 | MYSQL_MCP_TOKEN_TRACKING | No | 0 | Enable estimated token usage tracking (set to 1) |
 | MYSQL_MCP_TOKEN_MODEL | No | cl100k_base | Tokenizer encoding to use for estimation |
+| MYSQL_MCP_TOKEN_CARD | No | 0 | HTTP mode: enable **`/status`** live token dashboard + listing in **`GET /api`** (set to 1) |
 | MYSQL_MCP_AUDIT_LOG | No | – | Path to audit log file |
 | MYSQL_MCP_VECTOR | No | 0 | Enable vector tools for MySQL 9.0+ (set to 1) |
 | MYSQL_MCP_HTTP | No | 0 | Enable REST API mode (set to 1) |
@@ -121,7 +125,7 @@ Environment variables:
 | MYSQL_HTTP_RATE_LIMIT | No | 0 | Enable rate limiting for HTTP mode (set to 1) |
 | MYSQL_HTTP_RATE_LIMIT_RPS | No | 100 | Rate limit: requests per second |
 | MYSQL_HTTP_RATE_LIMIT_BURST | No | 200 | Rate limit: burst size |
-| MYSQL_MAX_OPEN_CONNS | No | 10 | Max open database connections |
+| MYSQL_MAX_OPEN_CONNS | No | 10 | Max open database connections (overrides `MYSQL_POOL_SIZE` when both are set) |
 | MYSQL_MAX_IDLE_CONNS | No | 5 | Max idle database connections |
 | MYSQL_CONN_MAX_LIFETIME_MINUTES | No | 30 | Connection max lifetime in minutes |
 | MYSQL_CONN_MAX_IDLE_TIME_MINUTES | No | 5 | Max idle time before connection is closed |
@@ -320,7 +324,7 @@ mysql-mcp-server --version
 
 Output:
 ```
-mysql-mcp-server v1.6.0
+mysql-mcp-server v1.7.0-rc.1
   Build time: 2025-12-21T11:43:11Z
   Git commit: a1b2c3d
 ```
@@ -644,7 +648,7 @@ Get the CREATE TABLE statement.
 
 ### explain_query
 
-Get execution plan for a SELECT query.
+Get execution plan for a SELECT query. Responses include optional **`warnings`** (e.g. full table scan, filesort) when the plan suggests optimizations.
 
 ```json
 { "sql": "SELECT * FROM users WHERE id = 1", "database": "myapp" }
@@ -841,15 +845,18 @@ All queries are automatically timed and logged with:
 
 ## Performance Tuning
 
-### Connection Pool
+### Connection pool and query timeouts
 
-Configure the connection pool for your workload:
+Configure the pool and how long queries may run (see also **`MYSQL_POOL_SIZE`** and **`MYSQL_QUERY_TIMEOUT`** / **`MYSQL_QUERY_TIMEOUT_SECONDS`** in the [configuration table](#configuration)):
 
 ```bash
-export MYSQL_MAX_OPEN_CONNS=20      # Max open connections
-export MYSQL_MAX_IDLE_CONNS=10      # Max idle connections  
+export MYSQL_MAX_OPEN_CONNS=20      # Max open connections (or use MYSQL_POOL_SIZE as an alias)
+export MYSQL_MAX_IDLE_CONNS=10      # Max idle connections
 export MYSQL_CONN_MAX_LIFETIME_MINUTES=60  # Connection lifetime
+export MYSQL_QUERY_TIMEOUT=30000    # Optional: timeout in ms (30 s) if you do not use MYSQL_QUERY_TIMEOUT_SECONDS
 ```
+
+`run_query` applies a server-side **`LIMIT`** when absent, returns **`truncated`** when more rows exist than the cap, and may **`warning`** on `SELECT *`. Use **`explain_query`** for plan **`warnings`** (full scans, filesort, etc.).
 
 ## Testing
 
@@ -922,7 +929,7 @@ make test-sakila-84
 make test-sakila-90
 ```
 
-For a multi-version Sakila test matrix (including alternate ports), see `docs/sakila-test-steps.md`.
+For a multi-version Sakila test matrix (including alternate ports and health-check helpers), see [`test-steps.md`](test-steps.md) at the repo root (canonical) or [`docs/sakila-test-steps.md`](docs/sakila-test-steps.md).
 
 The Sakila tests cover:
 - Multi-table JOINs (film→actors, customer→address→city→country)
@@ -1173,6 +1180,13 @@ Use `--silent` to suppress INFO/WARN logs when running under a service manager. 
 |--------|----------|-------------|
 | POST | `/api/vector/search` | Vector similarity search |
 | GET | `/api/vector/info?database=` | Vector column info |
+
+**Token metrics** (requires `MYSQL_MCP_TOKEN_CARD=1` or `features.token_card`; HTTP mode):
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/metrics/tokens` | Cumulative token usage, cost estimate, recent queries (always registered; zeros when tracking off) |
+| GET | `/status` | Live HTML dashboard (auto-refresh); listed in `GET /api` when the feature is enabled |
 
 ### Example Usage
 
