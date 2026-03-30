@@ -49,7 +49,7 @@ func Tunnel(cfg Config, remoteAddr string) (localAddr string, closeFn func(), er
 	sshConfig := &ssh.ClientConfig{
 		User:            cfg.User,
 		Auth:            []ssh.AuthMethod{ssh.PublicKeys(signer)},
-		HostKeyCallback: ssh.InsecureIgnoreHostKey(), // bastion; consider AcceptHostKey in future
+		HostKeyCallback: ssh.InsecureIgnoreHostKey(), //nolint:gosec // G106: bastion tunnel; host key pinning TBD
 		Timeout:         15 * time.Second,
 	}
 
@@ -91,6 +91,8 @@ func proxy(client *ssh.Client, remoteAddr string, local net.Conn) {
 		return
 	}
 	defer remote.Close()
-	go io.Copy(remote, local)
-	io.Copy(local, remote)
+	go func() {
+		_, _ = io.Copy(remote, local)
+	}()
+	_, _ = io.Copy(local, remote)
 }

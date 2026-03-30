@@ -1016,7 +1016,7 @@ export MYSQL_TEST_DSN="mcpuser:mcppass00@tcp(127.0.0.1:3307)/testdb?parseTime=tr
 export MYSQL_TEST_DSN="mcpuser:mcppass00@tcp(127.0.0.1:3308)/testdb?parseTime=true"
 ```
 
-Test credentials are **`mcpuser` / `mcppass00`** (see `tests/sql/mcp_test_user.sql`). After upgrading an existing Docker volume, recreate it so init scripts run: `docker compose -f docker-compose.test.yml down -v`.
+Test credentials are **`mcpuser` / `mcppass00`** (see `tests/sql/mcp_test_user.sql`). On **`testdb`**, this user has DDL/DML so integration tests can create fixtures; **`sakila`** stays read-only via `mcp_test_user_sakila.sql`. After upgrading an existing Docker volume, recreate it so init scripts run: `docker compose -f docker-compose.test.yml down -v`.
 
 Prefer **`127.0.0.1`** over **`localhost`** when the database runs in Docker (especially on macOS): `localhost` may resolve to IPv6 (`::1`) while the published port is IPv4-only, causing connection timeouts until the DSN uses `127.0.0.1`.
 
