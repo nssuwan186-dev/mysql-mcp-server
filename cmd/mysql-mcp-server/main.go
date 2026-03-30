@@ -155,6 +155,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("config error: %v", err)
 	}
+	initAccessControl(cfg.AllowedDatabases)
 
 	// Daemon mode requires HTTP mode; defer until after config load so we can check.
 	if parsed.daemon {
@@ -319,7 +320,7 @@ func registerCoreTools(server *mcp.Server) {
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "server_info",
-		Description: "Get MySQL server version, uptime, and configuration details",
+		Description: "Get MySQL server version, uptime, and configuration details. Pass detailed=true for health metrics (ping ms, threads_running, slow_queries, buffer pool hit rate). When MYSQL_MCP_TOKEN_TRACKING=1, includes token usage totals.",
 	}, toolServerInfoWrapped)
 }
 
@@ -351,6 +352,31 @@ func registerVectorTools(server *mcp.Server) {
 
 func registerExtendedTools(server *mcp.Server) {
 	logInfo("Registering extended MySQL tools...", nil)
+
+	if cfg.ProcessAdmin {
+		mcp.AddTool(server, &mcp.Tool{
+			Name:        "process_list",
+			Description: "Show active server threads (SHOW PROCESSLIST). Requires MYSQL_MCP_PROCESS_ADMIN=1 and PROCESS privilege.",
+		}, toolProcessListWrapped)
+		mcp.AddTool(server, &mcp.Tool{
+			Name:        "kill_query",
+			Description: "Terminate a server thread by Id from process_list (KILL). Requires MYSQL_MCP_PROCESS_ADMIN=1.",
+		}, toolKillQueryWrapped)
+	}
+
+	if cfg.ReadAuditTool && auditLogger != nil && auditLogger.enabled && cfg.AuditLogPath != "" {
+		mcp.AddTool(server, &mcp.Tool{
+			Name:        "read_audit_log",
+			Description: "Return the last lines of the configured MYSQL_MCP_AUDIT_LOG file (read-only). Requires MYSQL_MCP_READ_AUDIT_TOOL=1.",
+		}, toolReadAuditLogWrapped)
+	}
+
+	if cfg.SlowQueryTool {
+		mcp.AddTool(server, &mcp.Tool{
+			Name:        "slow_query_log",
+			Description: "Read recent rows from mysql.slow_log when slow_query_log uses TABLE output; otherwise summarize settings. Requires MYSQL_MCP_SLOW_QUERY_TOOL=1.",
+		}, toolSlowQueryLogWrapped)
+	}
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "list_indexes",
@@ -482,6 +508,11 @@ CONFIGURATION:
         MYSQL_MCP_TOKEN_MODEL        Tokenizer encoding to use (default: cl100k_base)
         MYSQL_MCP_TOKEN_CARD         Live token UI at /status: on by default in HTTP mode; set to 0 to disable
         MYSQL_MCP_AUDIT_LOG          Path to audit log file
+        MYSQL_MCP_ALLOWED_DATABASES Comma-separated schema allowlist (optional)
+        MYSQL_MCP_STRICT_READ_ONLY   Set 1 for transaction_read_only=ON on connections
+        MYSQL_MCP_PROCESS_ADMIN      Set 1 for process_list / kill_query tools (extended)
+        MYSQL_MCP_READ_AUDIT_TOOL    Set 1 for read_audit_log when audit path set
+        MYSQL_MCP_SLOW_QUERY_TOOL    Set 1 for slow_query_log tool (extended)
         MYSQL_MCP_VECTOR             Enable vector tools for MySQL 9.0+ (set to 1)
         MYSQL_MCP_HTTP               Enable REST API mode (set to 1)
         MYSQL_MCP_METRICS_HTTP       With stdio MCP only: serve /status and /api/metrics/tokens on MYSQL_HTTP_PORT (set to 1); not used when MYSQL_MCP_HTTP=1

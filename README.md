@@ -128,6 +128,11 @@ Environment variables:
 | MYSQL_MCP_TOKEN_MODEL | No | cl100k_base | Tokenizer encoding to use for estimation |
 | MYSQL_MCP_TOKEN_CARD | No | **on** when `MYSQL_MCP_HTTP` is set | **`/status`** live token dashboard + listing in **`GET /api`**; omit to use default **on**; set to **0** to disable |
 | MYSQL_MCP_AUDIT_LOG | No | – | Path to audit log file |
+| MYSQL_MCP_ALLOWED_DATABASES | No | – | Comma-separated schema allowlist (empty = all allowed) |
+| MYSQL_MCP_STRICT_READ_ONLY | No | 0 | Set `1` to enable `transaction_read_only=ON` on new connections |
+| MYSQL_MCP_PROCESS_ADMIN | No | 0 | Set `1` to enable `process_list` / `kill_query` (extended) |
+| MYSQL_MCP_READ_AUDIT_TOOL | No | 0 | Set `1` to enable `read_audit_log` when audit path is set |
+| MYSQL_MCP_SLOW_QUERY_TOOL | No | 0 | Set `1` to enable `slow_query_log` tool (extended) |
 | MYSQL_MCP_VECTOR | No | 0 | Enable vector tools for MySQL 9.0+ (set to 1) |
 | MYSQL_MCP_HTTP | No | 0 | Enable REST API mode (set to 1); **mutually exclusive** with stdio MCP |
 | MYSQL_MCP_METRICS_HTTP | No | 0 | With **stdio MCP only**: expose **`/status`** + **`/api/metrics/tokens`** on **`MYSQL_HTTP_PORT`** (same process as Claude/Cursor) |
@@ -893,6 +898,24 @@ export MYSQL_QUERY_TIMEOUT=30000    # Optional: timeout in ms (30 s) if you do n
 ```
 
 `run_query` applies a server-side **`LIMIT`** when absent, returns **`truncated`** when more rows exist than the cap, and may **`warning`** on `SELECT *`. Use **`explain_query`** for plan **`warnings`** (full scans, filesort, etc.).
+
+**MySQL `max_execution_time` vs MCP timeouts:** The server enforces **`MYSQL_QUERY_TIMEOUT_SECONDS`** (or **`MYSQL_QUERY_TIMEOUT`** in ms) on the Go side for every tool. That is independent of the MySQL session variable `max_execution_time` (often `0`, meaning “no engine-side cap”). For operator clarity: configure MCP query timeout for how long the client should wait; configure MySQL if you also want the optimizer to abort expensive SELECTs.
+
+**Concurrent tool calls:** Each parallel MCP tool call may use a pooled connection. If the host issues several tools at once, set **`MYSQL_MAX_OPEN_CONNS`** (alias **`MYSQL_POOL_SIZE`**) high enough—e.g. **10–20**—so threads do not queue behind a single connection.
+
+### Security options and privileged tools (extended mode)
+
+| Variable | Purpose |
+|----------|---------|
+| `MYSQL_MCP_ALLOWED_DATABASES` | Comma-separated schema allowlist. When set, tools that take a `database` argument must use an allowed name; `list_databases` / `database_size` only expose allowed schemas; `run_query` requires `database` and cannot be used to hop schemas via omission. |
+| `MYSQL_MCP_STRICT_READ_ONLY` | When `1`, new driver connections run with `transaction_read_only=ON` (harder to accidentally issue writes if grants allow them). |
+| `MYSQL_MCP_PROCESS_ADMIN` | Enables **`process_list`** and **`kill_query`** (and HTTP `/api/processlist`, `/api/kill`). Requires appropriate MySQL privileges (`PROCESS`, etc.). |
+| `MYSQL_MCP_READ_AUDIT_TOOL` | Enables **`read_audit_log`** when **`MYSQL_MCP_AUDIT_LOG`** is set (tail of the audit JSON file). |
+| `MYSQL_MCP_SLOW_QUERY_TOOL` | Enables **`slow_query_log`** (reads `mysql.slow_log` when `log_output` includes `TABLE`, otherwise returns file settings). |
+
+**`server_info`:** Pass **`detailed: true`** (MCP) or **`?detailed=1`** (HTTP) for ping latency, **`Threads_running`**, **`Slow_queries`**, **`Questions`**, and InnoDB buffer pool hit rate when stats are available. If **`MYSQL_MCP_TOKEN_TRACKING=1`**, **`token_metrics`** is always included (cumulative since process start).
+
+YAML file equivalents live under **`security:`** in the config file (`allowed_databases`, `strict_read_only`, `process_admin`, `read_audit_tool`, `slow_query_tool`).
 
 ## Testing
 

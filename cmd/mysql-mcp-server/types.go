@@ -69,7 +69,29 @@ type PingOutput struct {
 	Message   string `json:"message" jsonschema:"status message"`
 }
 
-type ServerInfoInput struct{}
+type ServerInfoInput struct {
+	Detailed bool `json:"detailed,omitempty" jsonschema:"when true, include health metrics (threads_running, slow_queries, buffer pool hit rate, ping latency)"`
+}
+
+// ServerHealthSnapshot is returned when server_info is called with detailed=true.
+type ServerHealthSnapshot struct {
+	PingLatencyMs          int64    `json:"ping_latency_ms,omitempty" jsonschema:"round-trip ping in milliseconds"`
+	ThreadsRunning         int      `json:"threads_running,omitempty" jsonschema:"Threads_running status"`
+	SlowQueries            int64    `json:"slow_queries,omitempty" jsonschema:"Slow_queries counter since startup"`
+	Questions              int64    `json:"questions,omitempty" jsonschema:"Questions counter since startup"`
+	BufferPoolHitPercent   *float64 `json:"buffer_pool_hit_percent,omitempty" jsonschema:"InnoDB buffer pool hit ratio 0-100 when available"`
+	BufferPoolReadRequests *int64   `json:"buffer_pool_read_requests,omitempty"`
+	BufferPoolReads        *int64   `json:"buffer_pool_reads,omitempty"`
+}
+
+// ServerTokenSnapshot summarizes token metrics when MYSQL_MCP_TOKEN_TRACKING=1.
+type ServerTokenSnapshot struct {
+	ToolCalls        int `json:"tool_calls,omitempty"`
+	TotalInputTokens int `json:"total_input_tokens,omitempty"`
+	TotalOutputTokens int `json:"total_output_tokens,omitempty"`
+	TotalTokens      int `json:"total_tokens,omitempty"`
+	MetricsUptimeSec int `json:"metrics_uptime_seconds,omitempty"`
+}
 
 type ServerInfoOutput struct {
 	Version          string `json:"version" jsonschema:"MySQL server version"`
@@ -82,6 +104,8 @@ type ServerInfoOutput struct {
 	Collation        string `json:"collation" jsonschema:"server collation"`
 	MaxConnections   int    `json:"max_connections" jsonschema:"maximum allowed connections"`
 	ThreadsConnected int    `json:"threads_connected" jsonschema:"current number of connected threads"`
+	Health           *ServerHealthSnapshot `json:"health,omitempty" jsonschema:"present when detailed=true"`
+	TokenMetrics     *ServerTokenSnapshot   `json:"token_metrics,omitempty" jsonschema:"present when token tracking is enabled"`
 }
 
 // ===== Multi-DSN Tool Types =====
@@ -109,6 +133,70 @@ type UseConnectionOutput struct {
 	Active   string `json:"active" jsonschema:"name of the now-active connection"`
 	Message  string `json:"message" jsonschema:"status message"`
 	Database string `json:"database,omitempty" jsonschema:"current database of the connection"`
+}
+
+// ===== Diagnostic / admin tools (extended, gated by config) =====
+
+type ProcessListInput struct{}
+
+type ProcessRow struct {
+	ID      int64          `json:"id" jsonschema:"connection / thread id"`
+	User    string         `json:"user" jsonschema:"user@host"`
+	Host    string         `json:"host" jsonschema:"client host"`
+	DB      string         `json:"db,omitempty" jsonschema:"default database"`
+	Command string         `json:"command" jsonschema:"thread command"`
+	Time    int            `json:"time" jsonschema:"seconds in current state"`
+	State   string         `json:"state,omitempty"`
+	Info    string         `json:"info,omitempty" jsonschema:"statement (truncated)"`
+}
+
+type ProcessListOutput struct {
+	Processes []ProcessRow `json:"processes" jsonschema:"active server threads"`
+	Note      string       `json:"note,omitempty" jsonschema:"privilege or compatibility note"`
+}
+
+type KillQueryInput struct {
+	ID int64 `json:"id" jsonschema:"thread id from process_list to KILL"`
+}
+
+type KillQueryOutput struct {
+	OK      bool   `json:"ok" jsonschema:"true if KILL executed"`
+	Message string `json:"message" jsonschema:"result message"`
+}
+
+type ReadAuditLogInput struct {
+	Lines int `json:"lines,omitempty" jsonschema:"max lines from end of file (default 50, max 500)"`
+}
+
+type ReadAuditLogOutput struct {
+	Path   string   `json:"path" jsonschema:"audit file path"`
+	Lines  []string `json:"lines" jsonschema:"recent log lines (JSON entries)"`
+	Truncated bool `json:"truncated,omitempty" jsonschema:"true if byte limit hit before reading full tail"`
+}
+
+type SlowQueryLogInput struct {
+	Limit int `json:"limit,omitempty" jsonschema:"max rows from mysql.slow_log (default 20, max 200)"`
+}
+
+type SlowQueryLogRow struct {
+	StartTime    string `json:"start_time,omitempty"`
+	UserHost     string `json:"user_host,omitempty"`
+	QueryTime    string `json:"query_time,omitempty"`
+	LockTime     string `json:"lock_time,omitempty"`
+	RowsSent     int64  `json:"rows_sent,omitempty"`
+	RowsExamined int64  `json:"rows_examined,omitempty"`
+	Database     string `json:"db,omitempty"`
+	LastInsertID int64  `json:"last_insert_id,omitempty"`
+	InsertID     int64  `json:"insert_id,omitempty"`
+	Query        string `json:"query,omitempty" jsonschema:"truncated SQL text"`
+}
+
+type SlowQueryLogOutput struct {
+	Mode        string            `json:"mode" jsonschema:"table_rows, file, or disabled"`
+	Message     string            `json:"message,omitempty"`
+	Settings    map[string]string `json:"settings,omitempty" jsonschema:"relevant @@variables when not table mode"`
+	Rows        []SlowQueryLogRow `json:"rows,omitempty"`
+	SlowQueries int64             `json:"slow_queries_status,omitempty" jsonschema:"Slow_queries counter"`
 }
 
 // ===== Vector Tool Types (MySQL 9.0+) =====

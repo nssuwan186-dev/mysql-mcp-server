@@ -28,6 +28,9 @@ type FileConfig struct {
 	// Feature flags
 	Features FileFeatureConfig `yaml:"features" json:"features"`
 
+	// Security / optional diagnostics
+	Security FileSecurityConfig `yaml:"security" json:"security"`
+
 	// Logging settings
 	Logging FileLoggingConfig `yaml:"logging" json:"logging"`
 
@@ -72,6 +75,15 @@ type FileFeatureConfig struct {
 	ExtendedTools bool `yaml:"extended_tools" json:"extended_tools"`
 	VectorTools   bool `yaml:"vector_tools" json:"vector_tools"`
 	TokenCard     bool `yaml:"token_card" json:"token_card"`
+}
+
+// FileSecurityConfig represents access-control and privileged tool flags.
+type FileSecurityConfig struct {
+	AllowedDatabases []string `yaml:"allowed_databases" json:"allowed_databases"`
+	StrictReadOnly   bool     `yaml:"strict_read_only" json:"strict_read_only"`
+	ProcessAdmin     bool     `yaml:"process_admin" json:"process_admin"`
+	ReadAuditTool    bool     `yaml:"read_audit_tool" json:"read_audit_tool"`
+	SlowQueryTool    bool     `yaml:"slow_query_tool" json:"slow_query_tool"`
 }
 
 // FileLoggingConfig represents logging settings in the config file.
@@ -261,6 +273,22 @@ func (fc *FileConfig) ToConfig() *Config {
 	cfg.VectorMode = fc.Features.VectorTools
 	cfg.TokenCard = fc.Features.TokenCard
 
+	if len(fc.Security.AllowedDatabases) > 0 {
+		cfg.AllowedDatabases = append([]string(nil), fc.Security.AllowedDatabases...)
+	}
+	if fc.Security.StrictReadOnly {
+		cfg.StrictReadOnly = true
+	}
+	if fc.Security.ProcessAdmin {
+		cfg.ProcessAdmin = true
+	}
+	if fc.Security.ReadAuditTool {
+		cfg.ReadAuditTool = true
+	}
+	if fc.Security.SlowQueryTool {
+		cfg.SlowQueryTool = true
+	}
+
 	cfg.JSONLogging = fc.Logging.JSONFormat
 	cfg.AuditLogPath = fc.Logging.AuditLogPath
 	cfg.TokenTracking = fc.Logging.TokenTracking
@@ -347,6 +375,13 @@ func PrintConfig(cfg *Config) string {
 			ExtendedTools: cfg.ExtendedMode,
 			VectorTools:   cfg.VectorMode,
 			TokenCard:     cfg.TokenCard,
+		},
+		Security: FileSecurityConfig{
+			AllowedDatabases: cfg.AllowedDatabases,
+			StrictReadOnly:   cfg.StrictReadOnly,
+			ProcessAdmin:     cfg.ProcessAdmin,
+			ReadAuditTool:    cfg.ReadAuditTool,
+			SlowQueryTool:    cfg.SlowQueryTool,
 		},
 		Logging: FileLoggingConfig{
 			JSONFormat:    cfg.JSONLogging,

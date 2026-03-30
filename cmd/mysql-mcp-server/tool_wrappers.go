@@ -7,6 +7,15 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
+func toolSkipsOutputTokenEstimate(name string) bool {
+	switch name {
+	case "list_variables", "list_status", "show_create_table":
+		return true
+	default:
+		return false
+	}
+}
+
 func wrapTool[I any, O any](toolName string, h mcp.ToolHandlerFor[I, O]) mcp.ToolHandlerFor[I, O] {
 	return func(ctx context.Context, req *mcp.CallToolRequest, input I) (*mcp.CallToolResult, O, error) {
 		start := time.Now()
@@ -17,7 +26,9 @@ func wrapTool[I any, O any](toolName string, h mcp.ToolHandlerFor[I, O]) mcp.Too
 		if tokenTracking && toolName != "run_query" {
 			inputTokens, _ := estimateTokensForValue(input)
 			outputTokens := 0
-			if err == nil {
+			// Skip output estimation for tools that routinely return very large JSON;
+			// tiktoken over big payloads can stall long enough for MCP clients to time out.
+			if err == nil && !toolSkipsOutputTokenEstimate(toolName) {
 				outputTokens, _ = estimateTokensForValue(out)
 			}
 			tokens := TokenUsage{
@@ -79,4 +90,9 @@ var (
 	toolForeignKeysWrapped     = wrapTool("foreign_keys", toolForeignKeys)
 	toolListStatusWrapped      = wrapTool("list_status", toolListStatus)
 	toolListVariablesWrapped   = wrapTool("list_variables", toolListVariables)
+
+	toolProcessListWrapped   = wrapTool("process_list", toolProcessList)
+	toolKillQueryWrapped     = wrapTool("kill_query", toolKillQuery)
+	toolReadAuditLogWrapped  = wrapTool("read_audit_log", toolReadAuditLog)
+	toolSlowQueryLogWrapped  = wrapTool("slow_query_log", toolSlowQueryLog)
 )

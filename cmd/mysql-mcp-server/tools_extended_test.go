@@ -781,12 +781,11 @@ func TestToolListVariablesSuccess(t *testing.T) {
 	mock, cleanup := setupExtendedMockDB(t)
 	defer cleanup()
 
-	rows := sqlmock.NewRows([]string{"VARIABLE_NAME", "VARIABLE_VALUE"}).
+	rows := sqlmock.NewRows([]string{"Variable_name", "Value"}).
 		AddRow("max_connections", "151").
 		AddRow("innodb_buffer_pool_size", "134217728")
 
-	mock.ExpectQuery("SELECT VARIABLE_NAME, VARIABLE_VALUE FROM performance_schema.global_variables ORDER BY VARIABLE_NAME").
-		WillReturnRows(rows)
+	mock.ExpectQuery("SHOW GLOBAL VARIABLES").WillReturnRows(rows)
 
 	ctx := context.Background()
 	_, output, err := toolListVariables(ctx, &mcp.CallToolRequest{}, ListVariablesInput{})
@@ -808,13 +807,11 @@ func TestToolListVariablesWithPattern(t *testing.T) {
 	mock, cleanup := setupExtendedMockDB(t)
 	defer cleanup()
 
-	rows := sqlmock.NewRows([]string{"VARIABLE_NAME", "VARIABLE_VALUE"}).
+	rows := sqlmock.NewRows([]string{"Variable_name", "Value"}).
 		AddRow("innodb_buffer_pool_instances", "1").
 		AddRow("innodb_buffer_pool_size", "134217728")
 
-	mock.ExpectQuery("SELECT VARIABLE_NAME, VARIABLE_VALUE FROM performance_schema.global_variables WHERE VARIABLE_NAME LIKE .* ORDER BY VARIABLE_NAME").
-		WithArgs("innodb_buffer%").
-		WillReturnRows(rows)
+	mock.ExpectQuery("SHOW GLOBAL VARIABLES LIKE").WithArgs("innodb_buffer%").WillReturnRows(rows)
 
 	ctx := context.Background()
 	_, output, err := toolListVariables(ctx, &mcp.CallToolRequest{}, ListVariablesInput{
@@ -838,15 +835,14 @@ func TestToolListVariablesFallback(t *testing.T) {
 	mock, cleanup := setupExtendedMockDB(t)
 	defer cleanup()
 
-	// Primary performance_schema query fails
-	mock.ExpectQuery("SELECT VARIABLE_NAME, VARIABLE_VALUE FROM performance_schema.global_variables ORDER BY VARIABLE_NAME").
-		WillReturnError(fmt.Errorf("Table 'performance_schema.global_variables' doesn't exist"))
+	mock.ExpectQuery("SHOW GLOBAL VARIABLES").
+		WillReturnError(fmt.Errorf("access denied"))
 
-	// Fallback SHOW GLOBAL VARIABLES succeeds
-	rows := sqlmock.NewRows([]string{"Variable_name", "Value"}).
+	rows := sqlmock.NewRows([]string{"VARIABLE_NAME", "VARIABLE_VALUE"}).
 		AddRow("max_connections", "151").
 		AddRow("innodb_buffer_pool_size", "134217728")
-	mock.ExpectQuery("SHOW GLOBAL VARIABLES").WillReturnRows(rows)
+	mock.ExpectQuery("SELECT VARIABLE_NAME, VARIABLE_VALUE FROM performance_schema.global_variables ORDER BY VARIABLE_NAME").
+		WillReturnRows(rows)
 
 	ctx := context.Background()
 	_, output, err := toolListVariables(ctx, &mcp.CallToolRequest{}, ListVariablesInput{})
@@ -868,15 +864,15 @@ func TestToolListVariablesFallbackWithPattern(t *testing.T) {
 	mock, cleanup := setupExtendedMockDB(t)
 	defer cleanup()
 
-	// Primary performance_schema query fails
-	mock.ExpectQuery("SELECT VARIABLE_NAME, VARIABLE_VALUE FROM performance_schema.global_variables WHERE VARIABLE_NAME LIKE .* ORDER BY VARIABLE_NAME").
-		WillReturnError(fmt.Errorf("Table 'performance_schema.global_variables' doesn't exist"))
+	mock.ExpectQuery("SHOW GLOBAL VARIABLES LIKE").WithArgs("innodb_buffer%").
+		WillReturnError(fmt.Errorf("access denied"))
 
-	// Fallback SHOW GLOBAL VARIABLES LIKE succeeds
-	rows := sqlmock.NewRows([]string{"Variable_name", "Value"}).
+	rows := sqlmock.NewRows([]string{"VARIABLE_NAME", "VARIABLE_VALUE"}).
 		AddRow("innodb_buffer_pool_instances", "1").
 		AddRow("innodb_buffer_pool_size", "134217728")
-	mock.ExpectQuery("SHOW GLOBAL VARIABLES LIKE").WithArgs("innodb_buffer%").WillReturnRows(rows)
+	mock.ExpectQuery("SELECT VARIABLE_NAME, VARIABLE_VALUE FROM performance_schema.global_variables WHERE VARIABLE_NAME LIKE .* ORDER BY VARIABLE_NAME").
+		WithArgs("innodb_buffer%").
+		WillReturnRows(rows)
 
 	ctx := context.Background()
 	_, output, err := toolListVariables(ctx, &mcp.CallToolRequest{}, ListVariablesInput{

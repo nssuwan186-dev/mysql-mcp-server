@@ -22,6 +22,9 @@ func toolListIndexes(
 	if input.Database == "" || input.Table == "" {
 		return nil, ListIndexesOutput{}, fmt.Errorf("database and table are required")
 	}
+	if err := requireAllowedDatabase(input.Database); err != nil {
+		return nil, ListIndexesOutput{}, err
+	}
 
 	dbName, err := util.QuoteIdent(input.Database)
 	if err != nil {
@@ -99,6 +102,9 @@ func toolShowCreateTable(
 	if input.Database == "" || input.Table == "" {
 		return nil, ShowCreateTableOutput{}, fmt.Errorf("database and table are required")
 	}
+	if err := requireAllowedDatabase(input.Database); err != nil {
+		return nil, ShowCreateTableOutput{}, err
+	}
 
 	dbName, err := util.QuoteIdent(input.Database)
 	if err != nil {
@@ -137,10 +143,19 @@ func toolExplainQuery(
 		return nil, ExplainQueryOutput{}, fmt.Errorf("only SELECT statements can be explained")
 	}
 
+	database := strings.TrimSpace(input.Database)
+	if accessControlEnabled() && database == "" {
+		return nil, ExplainQueryOutput{}, fmt.Errorf("database is required when MYSQL_MCP_ALLOWED_DATABASES is set")
+	}
+	if database != "" {
+		if err := requireAllowedDatabase(database); err != nil {
+			return nil, ExplainQueryOutput{}, err
+		}
+	}
+
 	ctx, cancel := context.WithTimeout(ctx, queryTimeout)
 	defer cancel()
 
-	database := strings.TrimSpace(input.Database)
 	explainSQL := "EXPLAIN " + sqlText
 	var rows *sql.Rows
 	var err error
@@ -266,6 +281,9 @@ func toolListViews(
 	if input.Database == "" {
 		return nil, ListViewsOutput{}, fmt.Errorf("database is required")
 	}
+	if err := requireAllowedDatabase(input.Database); err != nil {
+		return nil, ListViewsOutput{}, err
+	}
 
 	ctx, cancel := context.WithTimeout(ctx, queryTimeout)
 	defer cancel()
@@ -304,6 +322,9 @@ func toolListTriggers(
 	if input.Database == "" {
 		return nil, ListTriggersOutput{}, fmt.Errorf("database is required")
 	}
+	if err := requireAllowedDatabase(input.Database); err != nil {
+		return nil, ListTriggersOutput{}, err
+	}
 
 	ctx, cancel := context.WithTimeout(ctx, queryTimeout)
 	defer cancel()
@@ -341,6 +362,9 @@ func toolListProcedures(
 ) (*mcp.CallToolResult, ListProceduresOutput, error) {
 	if input.Database == "" {
 		return nil, ListProceduresOutput{}, fmt.Errorf("database is required")
+	}
+	if err := requireAllowedDatabase(input.Database); err != nil {
+		return nil, ListProceduresOutput{}, err
 	}
 
 	ctx, cancel := context.WithTimeout(ctx, queryTimeout)
@@ -381,6 +405,9 @@ func toolListFunctions(
 	if input.Database == "" {
 		return nil, ListFunctionsOutput{}, fmt.Errorf("database is required")
 	}
+	if err := requireAllowedDatabase(input.Database); err != nil {
+		return nil, ListFunctionsOutput{}, err
+	}
 
 	ctx, cancel := context.WithTimeout(ctx, queryTimeout)
 	defer cancel()
@@ -419,6 +446,9 @@ func toolListPartitions(
 ) (*mcp.CallToolResult, ListPartitionsOutput, error) {
 	if input.Database == "" || input.Table == "" {
 		return nil, ListPartitionsOutput{}, fmt.Errorf("database and table are required")
+	}
+	if err := requireAllowedDatabase(input.Database); err != nil {
+		return nil, ListPartitionsOutput{}, err
 	}
 
 	ctx, cancel := context.WithTimeout(ctx, queryTimeout)
@@ -462,6 +492,13 @@ func toolDatabaseSize(
 	req *mcp.CallToolRequest,
 	input DatabaseSizeInput,
 ) (*mcp.CallToolResult, DatabaseSizeOutput, error) {
+	database := strings.TrimSpace(input.Database)
+	if database != "" {
+		if err := requireAllowedDatabase(database); err != nil {
+			return nil, DatabaseSizeOutput{}, err
+		}
+	}
+
 	ctx, cancel := context.WithTimeout(ctx, queryTimeout)
 	defer cancel()
 
@@ -473,7 +510,7 @@ func toolDatabaseSize(
 		COUNT(*) as tables
 		FROM information_schema.TABLES`
 
-	if input.Database != "" {
+	if database != "" {
 		query += " WHERE TABLE_SCHEMA = ?"
 	} else {
 		query += " WHERE TABLE_SCHEMA NOT IN ('information_schema', 'performance_schema', 'mysql', 'sys')"
@@ -482,8 +519,8 @@ func toolDatabaseSize(
 
 	var rows *sql.Rows
 	var err error
-	if input.Database != "" {
-		rows, err = getDB().QueryContext(ctx, query, input.Database)
+	if database != "" {
+		rows, err = getDB().QueryContext(ctx, query, database)
 	} else {
 		rows, err = getDB().QueryContext(ctx, query)
 	}
@@ -496,6 +533,9 @@ func toolDatabaseSize(
 	for rows.Next() {
 		var d DatabaseSizeInfo
 		if err := rows.Scan(&d.Name, &d.SizeMB, &d.DataMB, &d.IndexMB, &d.Tables); err != nil {
+			continue
+		}
+		if accessControlEnabled() && !databaseAllowed(d.Name) {
 			continue
 		}
 		out.Databases = append(out.Databases, d)
@@ -517,6 +557,9 @@ func toolTableSize(
 ) (*mcp.CallToolResult, TableSizeOutput, error) {
 	if input.Database == "" {
 		return nil, TableSizeOutput{}, fmt.Errorf("database is required")
+	}
+	if err := requireAllowedDatabase(input.Database); err != nil {
+		return nil, TableSizeOutput{}, err
 	}
 
 	ctx, cancel := context.WithTimeout(ctx, queryTimeout)
@@ -578,6 +621,9 @@ func toolForeignKeys(
 ) (*mcp.CallToolResult, ForeignKeysOutput, error) {
 	if input.Database == "" {
 		return nil, ForeignKeysOutput{}, fmt.Errorf("database is required")
+	}
+	if err := requireAllowedDatabase(input.Database); err != nil {
+		return nil, ForeignKeysOutput{}, err
 	}
 
 	ctx, cancel := context.WithTimeout(ctx, queryTimeout)
@@ -690,21 +736,22 @@ func toolListVariables(
 	var rows *sql.Rows
 	var err error
 
-	// Use performance_schema for better performance and flexibility
+	// Prefer SHOW GLOBAL VARIABLES first: it is the most compatible path across managed
+	// MySQL/MariaDB deployments. Some environments stall when selecting from
+	// performance_schema.global_variables; use that only as a fallback.
 	if input.Pattern != "" {
-		rows, err = getDB().QueryContext(ctx,
-			"SELECT VARIABLE_NAME, VARIABLE_VALUE FROM performance_schema.global_variables WHERE VARIABLE_NAME LIKE ? ORDER BY VARIABLE_NAME",
-			input.Pattern)
+		rows, err = getDB().QueryContext(ctx, "SHOW GLOBAL VARIABLES LIKE ?", input.Pattern)
 	} else {
-		rows, err = getDB().QueryContext(ctx,
-			"SELECT VARIABLE_NAME, VARIABLE_VALUE FROM performance_schema.global_variables ORDER BY VARIABLE_NAME")
+		rows, err = getDB().QueryContext(ctx, "SHOW GLOBAL VARIABLES")
 	}
 	if err != nil {
-		// Fallback to SHOW GLOBAL VARIABLES for restricted environments or older versions
 		if input.Pattern != "" {
-			rows, err = getDB().QueryContext(ctx, "SHOW GLOBAL VARIABLES LIKE ?", input.Pattern)
+			rows, err = getDB().QueryContext(ctx,
+				"SELECT VARIABLE_NAME, VARIABLE_VALUE FROM performance_schema.global_variables WHERE VARIABLE_NAME LIKE ? ORDER BY VARIABLE_NAME",
+				input.Pattern)
 		} else {
-			rows, err = getDB().QueryContext(ctx, "SHOW GLOBAL VARIABLES")
+			rows, err = getDB().QueryContext(ctx,
+				"SELECT VARIABLE_NAME, VARIABLE_VALUE FROM performance_schema.global_variables ORDER BY VARIABLE_NAME")
 		}
 		if err != nil {
 			return nil, ListVariablesOutput{}, fmt.Errorf("query variables failed: %w", err)
@@ -739,6 +786,9 @@ func toolVectorSearch(
 ) (*mcp.CallToolResult, VectorSearchOutput, error) {
 	if input.Database == "" || input.Table == "" || input.Column == "" {
 		return nil, VectorSearchOutput{}, fmt.Errorf("database, table, and column are required")
+	}
+	if err := requireAllowedDatabase(input.Database); err != nil {
+		return nil, VectorSearchOutput{}, err
 	}
 	if len(input.Query) == 0 {
 		return nil, VectorSearchOutput{}, fmt.Errorf("query vector is required")
@@ -863,6 +913,9 @@ func toolVectorInfo(
 ) (*mcp.CallToolResult, VectorInfoOutput, error) {
 	if input.Database == "" {
 		return nil, VectorInfoOutput{}, fmt.Errorf("database is required")
+	}
+	if err := requireAllowedDatabase(input.Database); err != nil {
+		return nil, VectorInfoOutput{}, err
 	}
 
 	ctx, cancel := context.WithTimeout(ctx, queryTimeout)

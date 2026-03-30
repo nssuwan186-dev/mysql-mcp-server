@@ -4,12 +4,66 @@ package main
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/askdba/mysql-mcp-server/internal/config"
+	"github.com/go-sql-driver/mysql"
 )
+
+func TestApplyDefaultIOTimeouts(t *testing.T) {
+	base := "user:pass@tcp(127.0.0.1:3306)/db"
+	out, err := applyDefaultIOTimeouts(base, 30*time.Second)
+	if err != nil {
+		t.Fatalf("applyDefaultIOTimeouts: %v", err)
+	}
+	if !strings.Contains(out, "readTimeout=32s") || !strings.Contains(out, "writeTimeout=32s") {
+		t.Fatalf("expected read/write timeout params in %q", out)
+	}
+	parsed, err := mysql.ParseDSN(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if parsed.ReadTimeout != 32*time.Second || parsed.WriteTimeout != 32*time.Second {
+		t.Fatalf("got read=%v write=%v", parsed.ReadTimeout, parsed.WriteTimeout)
+	}
+}
+
+func TestApplyStrictReadOnlyDSN(t *testing.T) {
+	base := "user:pass@tcp(127.0.0.1:3306)/db"
+	out, err := applyStrictReadOnlyDSN(base, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed, err := mysql.ParseDSN(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if parsed.Params["transaction_read_only"] != "ON" {
+		t.Fatalf("expected transaction_read_only=ON in params, got %q", parsed.Params["transaction_read_only"])
+	}
+	out2, err := applyStrictReadOnlyDSN(base, false)
+	if err != nil || out2 != base {
+		t.Fatalf("strict off should return unchanged dsn: %v %q", err, out2)
+	}
+}
+
+func TestApplyDefaultIOTimeoutsPreservesExplicit(t *testing.T) {
+	base := "user:pass@tcp(127.0.0.1:3306)/db?readTimeout=7s&writeTimeout=8s"
+	out, err := applyDefaultIOTimeouts(base, 30*time.Second)
+	if err != nil {
+		t.Fatalf("applyDefaultIOTimeouts: %v", err)
+	}
+	parsed, err := mysql.ParseDSN(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if parsed.ReadTimeout != 7*time.Second || parsed.WriteTimeout != 8*time.Second {
+		t.Fatalf("expected explicit timeouts preserved, got read=%v write=%v", parsed.ReadTimeout, parsed.WriteTimeout)
+	}
+}
 
 func TestNewConnectionManager(t *testing.T) {
 	cm := NewConnectionManager()
