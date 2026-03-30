@@ -22,6 +22,7 @@ func clearEnv() {
 		"MYSQL_MCP_EXTENDED",
 		"MYSQL_MCP_VECTOR",
 		"MYSQL_MCP_HTTP",
+		"MYSQL_MCP_METRICS_HTTP",
 		"MYSQL_MCP_JSON_LOGS",
 		"MYSQL_MCP_TOKEN_TRACKING",
 		"MYSQL_MCP_TOKEN_MODEL",
@@ -188,6 +189,42 @@ func TestLoadOverridesFromEnv(t *testing.T) {
 	}
 }
 
+func TestMetricsHTTPSidecarTokenCardDefault(t *testing.T) {
+	clearEnv()
+	os.Setenv("MYSQL_DSN", "user:pass@tcp(localhost:3306)/testdb")
+	os.Setenv("MYSQL_MCP_METRICS_HTTP", "1")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.HTTPMode {
+		t.Fatal("expected HTTPMode false when only METRICS_HTTP")
+	}
+	if !cfg.MetricsHTTP {
+		t.Fatal("expected MetricsHTTP true")
+	}
+	if !cfg.TokenCard {
+		t.Fatal("expected TokenCard true by default for metrics sidecar when MYSQL_MCP_TOKEN_CARD unset")
+	}
+}
+
+func TestHTTPModeClearsMetricsHTTP(t *testing.T) {
+	clearEnv()
+	os.Setenv("MYSQL_DSN", "user:pass@tcp(localhost:3306)/testdb")
+	os.Setenv("MYSQL_MCP_HTTP", "1")
+	os.Setenv("MYSQL_MCP_METRICS_HTTP", "1")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !cfg.HTTPMode {
+		t.Fatal("expected HTTPMode true")
+	}
+	if cfg.MetricsHTTP {
+		t.Fatal("expected MetricsHTTP cleared when full HTTP mode is on")
+	}
+}
+
 func TestHTTPModeTokenCardExplicitOff(t *testing.T) {
 	clearEnv()
 	os.Setenv("MYSQL_DSN", "user:pass@tcp(localhost:3306)/testdb")
@@ -302,21 +339,25 @@ func TestGetEnvBool(t *testing.T) {
 		t.Fatal("expected false for unset var")
 	}
 
-	// Test "1" returns true
-	os.Setenv("TEST_BOOL", "1")
-	if !GetEnvBool("TEST_BOOL") {
-		t.Fatal("expected true for '1'")
-	}
-
-	// Test other values return false
-	os.Setenv("TEST_BOOL", "true")
-	if GetEnvBool("TEST_BOOL") {
-		t.Fatal("expected false for 'true' (only '1' is true)")
+	// Test truthy values
+	for _, v := range []string{"1", "true", "TRUE", " yes ", "on", "y"} {
+		os.Setenv("TEST_BOOL", v)
+		if !GetEnvBool("TEST_BOOL") {
+			t.Fatalf("expected true for %q", v)
+		}
 	}
 
 	os.Setenv("TEST_BOOL", "0")
 	if GetEnvBool("TEST_BOOL") {
 		t.Fatal("expected false for '0'")
+	}
+	os.Setenv("TEST_BOOL", "false")
+	if GetEnvBool("TEST_BOOL") {
+		t.Fatal("expected false for 'false'")
+	}
+	os.Setenv("TEST_BOOL", "maybe")
+	if GetEnvBool("TEST_BOOL") {
+		t.Fatal("expected false for unknown value")
 	}
 
 	os.Unsetenv("TEST_BOOL")

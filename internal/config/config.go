@@ -63,6 +63,7 @@ type Config struct {
 	ExtendedMode bool
 	VectorMode   bool
 	HTTPMode     bool
+	MetricsHTTP  bool // Serve /status + /api/metrics/tokens on HTTP while MCP uses stdio (Claude Desktop)
 	JSONLogging  bool
 	TokenCard    bool // Enable live monitoring UI at /status
 
@@ -174,6 +175,9 @@ func applyEnvOverrides(cfg *Config) {
 	if v := os.Getenv("MYSQL_MCP_HTTP"); v != "" {
 		cfg.HTTPMode = getEnvBool("MYSQL_MCP_HTTP")
 	}
+	if v := os.Getenv("MYSQL_MCP_METRICS_HTTP"); v != "" {
+		cfg.MetricsHTTP = getEnvBool("MYSQL_MCP_METRICS_HTTP")
+	}
 	if v := os.Getenv("MYSQL_MCP_JSON_LOGS"); v != "" {
 		cfg.JSONLogging = getEnvBool("MYSQL_MCP_JSON_LOGS")
 	}
@@ -188,6 +192,10 @@ func applyEnvOverrides(cfg *Config) {
 	}
 	// When HTTP is enabled via MYSQL_MCP_HTTP, serve /status by default (e.g. brew, launchd). Set MYSQL_MCP_TOKEN_CARD=0 to disable.
 	if cfg.HTTPMode && os.Getenv("MYSQL_MCP_TOKEN_CARD") == "" && strings.TrimSpace(os.Getenv("MYSQL_MCP_HTTP")) != "" {
+		cfg.TokenCard = true
+	}
+	// Metrics-only HTTP alongside stdio MCP: /status by default when MYSQL_MCP_METRICS_HTTP=1.
+	if cfg.MetricsHTTP && !cfg.HTTPMode && os.Getenv("MYSQL_MCP_TOKEN_CARD") == "" {
 		cfg.TokenCard = true
 	}
 	if v := os.Getenv("MYSQL_HTTP_PORT"); v != "" {
@@ -207,6 +215,9 @@ func applyEnvOverrides(cfg *Config) {
 	}
 	if v := os.Getenv("MYSQL_MCP_AUDIT_LOG"); v != "" {
 		cfg.AuditLogPath = strings.TrimSpace(v)
+	}
+	if cfg.HTTPMode {
+		cfg.MetricsHTTP = false // full REST API replaces metrics-only sidecar
 	}
 }
 
@@ -321,9 +332,16 @@ func getEnvInt(key string, def int) int {
 	return n
 }
 
-// getEnvBool reads a boolean from an environment variable (1 = true).
+// getEnvBool reads a boolean from an environment variable.
+// True: 1, true, yes, on, y (case-insensitive, trimmed). False: 0, false, no, off, empty, or unknown.
 func getEnvBool(key string) bool {
-	return os.Getenv(key) == "1"
+	v := strings.TrimSpace(strings.ToLower(os.Getenv(key)))
+	switch v {
+	case "1", "true", "yes", "on", "y":
+		return true
+	default:
+		return false
+	}
 }
 
 // GetEnvInt is exported for use by other packages.

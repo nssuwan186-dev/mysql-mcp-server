@@ -45,6 +45,15 @@ brew install askdba/tap/mysql-mcp-server
 brew update && brew upgrade mysql-mcp-server
 ```
 
+**Apple Silicon — “Cannot install under Rosetta 2 in ARM default prefix (/opt/homebrew)”**  
+Your shell is running **Homebrew under Rosetta (Intel)** while **`/opt/homebrew`** is **ARM**. They must match. Use one of:
+
+- Run upgrades as ARM: **`arch -arm64 brew upgrade mysql-mcp-server`** (or **`arch -arm64 /opt/homebrew/bin/brew upgrade mysql-mcp-server`**).
+- **Terminal.app → Get Info** → uncheck **Open using Rosetta**, then open a new terminal.
+- Put **`/opt/homebrew/bin`** first in **`PATH`** so you use the ARM `brew` and binary.
+
+**Claude Desktop:** on Apple Silicon, point **`command`** at **`/opt/homebrew/bin/mysql-mcp-server`**. **`/usr/local/opt/mysql-mcp-server/...`** is normally **Intel** Homebrew and can stay on an old version.
+
 ### Docker
 
 ```bash
@@ -120,8 +129,9 @@ Environment variables:
 | MYSQL_MCP_TOKEN_CARD | No | **on** when `MYSQL_MCP_HTTP` is set | **`/status`** live token dashboard + listing in **`GET /api`**; omit to use default **on**; set to **0** to disable |
 | MYSQL_MCP_AUDIT_LOG | No | – | Path to audit log file |
 | MYSQL_MCP_VECTOR | No | 0 | Enable vector tools for MySQL 9.0+ (set to 1) |
-| MYSQL_MCP_HTTP | No | 0 | Enable REST API mode (set to 1) |
-| MYSQL_HTTP_PORT | No | 9306 | HTTP port for REST API mode |
+| MYSQL_MCP_HTTP | No | 0 | Enable REST API mode (set to 1); **mutually exclusive** with stdio MCP |
+| MYSQL_MCP_METRICS_HTTP | No | 0 | With **stdio MCP only**: expose **`/status`** + **`/api/metrics/tokens`** on **`MYSQL_HTTP_PORT`** (same process as Claude/Cursor) |
+| MYSQL_HTTP_PORT | No | 9306 | Port for REST API **or** metrics sidecar |
 | MYSQL_HTTP_RATE_LIMIT | No | 0 | Enable rate limiting for HTTP mode (set to 1) |
 | MYSQL_HTTP_RATE_LIMIT_RPS | No | 100 | Rate limit: requests per second |
 | MYSQL_HTTP_RATE_LIMIT_BURST | No | 200 | Rate limit: burst size |
@@ -366,6 +376,17 @@ Add:
 ```
 
 > **Note:** If Claude Desktop cannot find the binary, replace `"mysql-mcp-server"` with the full path from `which mysql-mcp-server`.
+
+**Token dashboard (`/status`) in the same process as MCP:** stdio MCP does not open HTTP by default. Set **`MYSQL_MCP_METRICS_HTTP=1`** so this instance also listens on **`MYSQL_HTTP_PORT`** (default **9306**) for **`http://127.0.0.1:9306/status`** and **`/api/metrics/tokens`** — the same counters as Claude’s tool calls. Use **`MYSQL_MCP_TOKEN_TRACKING=1`** so the dashboard is meaningful. Do **not** set **`MYSQL_MCP_HTTP=1`** here (that mode replaces MCP with full REST only).
+
+```json
+"env": {
+  "MYSQL_DSN": "user:password@tcp(127.0.0.1:3306)/mydb?parseTime=true",
+  "MYSQL_MCP_TOKEN_TRACKING": "1",
+  "MYSQL_MCP_METRICS_HTTP": "1",
+  "MYSQL_HTTP_PORT": "9306"
+}
+```
 
 Restart Claude Desktop.
 

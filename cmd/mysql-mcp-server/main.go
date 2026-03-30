@@ -231,6 +231,7 @@ func main() {
 		"extendedMode":     extendedMode,
 		"vectorMode":       cfg.VectorMode,
 		"httpMode":         cfg.HTTPMode,
+		"metricsHTTP":      cfg.MetricsHTTP,
 		"httpPort":         cfg.HTTPPort,
 		"jsonLogging":      jsonLogging,
 		"auditLogEnabled":  auditLogger.enabled,
@@ -245,6 +246,11 @@ func main() {
 	if cfg.HTTPMode {
 		startHTTPServer(cfg.HTTPPort, cfg.VectorMode, tokenCard)
 		return
+	}
+
+	// Optional: token metrics + /status on HTTP while MCP uses stdio (Claude Desktop, Cursor)
+	if cfg.MetricsHTTP {
+		go startTokenMetricsHTTPServer(cfg.HTTPPort, tokenCard)
 	}
 
 	// ---- Build MCP server ----
@@ -478,7 +484,8 @@ CONFIGURATION:
         MYSQL_MCP_AUDIT_LOG          Path to audit log file
         MYSQL_MCP_VECTOR             Enable vector tools for MySQL 9.0+ (set to 1)
         MYSQL_MCP_HTTP               Enable REST API mode (set to 1)
-        MYSQL_HTTP_PORT              HTTP port for REST API mode (default: 9306)
+        MYSQL_MCP_METRICS_HTTP       With stdio MCP only: serve /status and /api/metrics/tokens on MYSQL_HTTP_PORT (set to 1); not used when MYSQL_MCP_HTTP=1
+        MYSQL_HTTP_PORT              HTTP port for REST API or metrics sidecar (default: 9306)
         MYSQL_HTTP_RATE_LIMIT        Enable rate limiting for HTTP mode (set to 1)
         MYSQL_HTTP_RATE_LIMIT_RPS    Rate limit: requests per second (default: 100)
         MYSQL_HTTP_RATE_LIMIT_BURST  Rate limit: burst size (default: 200)
@@ -523,6 +530,13 @@ EXAMPLES:
     # HTTP REST API mode
     export MYSQL_DSN="user:pass@tcp(localhost:3306)/mydb"
     export MYSQL_MCP_HTTP=1
+    export MYSQL_HTTP_PORT=9306
+    mysql-mcp-server
+
+    # Claude Desktop: stdio MCP + token dashboard on http://127.0.0.1:9306/status (same process)
+    export MYSQL_DSN="user:pass@tcp(127.0.0.1:3306)/db?parseTime=true"
+    export MYSQL_MCP_TOKEN_TRACKING=1
+    export MYSQL_MCP_METRICS_HTTP=1
     export MYSQL_HTTP_PORT=9306
     mysql-mcp-server
 

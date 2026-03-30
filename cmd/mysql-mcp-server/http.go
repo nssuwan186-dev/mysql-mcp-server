@@ -722,3 +722,64 @@ func startHTTPServer(port int, vectorMode bool, tokenCardEnabled bool) {
 		rateLimiter.Stop()
 	}
 }
+
+// startTokenMetricsHTTPServer listens on cfg.HTTPPort for /health, /api/metrics/tokens, and optionally /status
+// while MCP runs on stdio in the same process (e.g. Claude Desktop). Set MYSQL_MCP_METRICS_HTTP=1.
+// Does not serve the full REST API; use MYSQL_MCP_HTTP=1 for that (exclusive).
+func startTokenMetricsHTTPServer(port int, tokenCardEnabled bool) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/health", api.WithCORS(httpHealth))
+	mux.HandleFunc("/api/metrics/tokens", api.WithCORS(httpMetricsTokens))
+	if tokenCardEnabled {
+		mux.HandleFunc("/status", httpStatusPage)
+	}
+
+	index := func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api" && r.URL.Path != "/api/" {
+			http.NotFound(w, r)
+			return
+		}
+		endpoints := map[string]string{
+			"GET  /health":             "Health check",
+			"GET  /api":                "This index (metrics-only; MCP uses stdio)",
+			"GET  /api/metrics/tokens": "Token usage (same process as MCP)",
+		}
+		if tokenCardEnabled {
+			endpoints["GET  /status"] = "Token Tracking Card dashboard"
+		}
+		api.WriteSuccess(w, map[string]interface{}{
+			"service":     "mysql-mcp-server",
+			"mode":        "stdio_mcp_with_metrics_http",
+			"version":     Version,
+			"description": "HTTP exposes token metrics; MCP protocol uses stdin/stdout.",
+			"endpoints":   endpoints,
+		})
+	}
+	mux.HandleFunc("/api", api.WithCORS(index))
+	mux.HandleFunc("/api/", api.WithCORS(index))
+
+	addr := ":" + strconv.Itoa(port)
+	handler := api.WithLogging(httpLogger)(mux.ServeHTTP)
+
+	srv := &http.Server{
+		Addr:         addr,
+		Handler:      handler,
+		ReadTimeout:  15 * time.Second,
+		WriteTimeout: 15 * time.Second,
+	}
+
+	logInfo("token metrics HTTP sidecar (stdio MCP)", map[string]interface{}{
+		"address":    "http://127.0.0.1" + addr,
+		"http_port":  port,
+		"token_card": tokenCardEnabled,
+	})
+	if tokenCardEnabled {
+		logInfo("token dashboard URL (same process as MCP)", map[string]interface{}{
+			"url": fmt.Sprintf("http://127.0.0.1:%d/status", port),
+		})
+	}
+
+	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		logError("token metrics HTTP sidecar failed", map[string]interface{}{"error": err.Error(), "port": port})
+	}
+}
