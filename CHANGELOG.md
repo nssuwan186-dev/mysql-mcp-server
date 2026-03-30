@@ -7,6 +7,21 @@ Semantic Versioning.
 
 ## [Unreleased]
 
+## [1.7.0-rc.3] - 2026-03-31
+
+Third release candidate: metrics HTTP sidecar for stdio MCP (Claude Desktop) and friendlier boolean env parsing.
+
+### Added
+
+- **`MYSQL_MCP_METRICS_HTTP`**: optional HTTP listener on **`MYSQL_HTTP_PORT`** while MCP uses **stdio** — **`GET /health`**, **`GET /api/metrics/tokens`**, **`GET /status`** in-process with the MCP server so token metrics match Claude Desktop usage ([#102](https://github.com/askdba/mysql-mcp-server/issues/102)).
+
+### Changed
+
+- **`getEnvBool`**: treats **`true`**, **`yes`**, **`on`**, **`y`** as true (case-insensitive), not only **`1`**, for **`MYSQL_MCP_*`** and related flags.
+- **Full REST vs sidecar**: when **`MYSQL_MCP_HTTP=1`**, **`MetricsHTTP`** is cleared so the metrics-only listener does not run alongside the full HTTP API.
+
+---
+
 ## [1.7.0-rc.2] - 2026-03-30
 
 Second release candidate: integration-test identity, HTTP token UX, and compose port safety.

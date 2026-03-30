@@ -2,6 +2,17 @@
 
 Releases are automated via GitHub Actions and GoReleaser. This doc is the full checklist for maintainers.
 
+## Workflow (humans and coding agents)
+
+Do **not** land user-facing behavior on `main` and walk away. Before or as part of the same work stream:
+
+1. **Issue** — Open a GitHub issue describing the change (or a release-tracking issue with a checklist).
+2. **PR** — Prefer a pull request that references the issue. If code already merged to `main` without a PR, open a **retrospective issue** and link commits and the upcoming CHANGELOG section (traceability over branch gymnastics).
+3. **CHANGELOG** — Add a versioned section (`[1.7.0-rc.N]` or GA) **before** tagging; keep `[Unreleased]` at the top per [Pre-release](#pre-release).
+4. **Tag** — Annotated tag + `git push origin vX.Y.Z` so GoReleaser runs.
+
+Skipping CHANGELOG until after an RC tag ships the wrong story to users and Homebrew; skipping the issue makes releases hard to explain in release notes.
+
 ## Release candidates
 
 - Tag format: **`v1.7.0-rc.1`**, **`v1.7.0-rc.2`**, etc. (semver pre-release after the patch segment).
