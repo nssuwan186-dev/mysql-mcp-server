@@ -48,6 +48,19 @@ func TestApplyStrictReadOnlyDSN(t *testing.T) {
 	if err != nil || out2 != base {
 		t.Fatalf("strict off should return unchanged dsn: %v %q", err, out2)
 	}
+
+	withOff := "user:pass@tcp(127.0.0.1:3306)/db?transaction_read_only=OFF"
+	out3, err := applyStrictReadOnlyDSN(withOff, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p3, err := mysql.ParseDSN(out3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p3.Params["transaction_read_only"] != "ON" {
+		t.Fatalf("strict read-only must override DSN OFF, got %q", p3.Params["transaction_read_only"])
+	}
 }
 
 func TestApplyDefaultIOTimeoutsPreservesExplicit(t *testing.T) {

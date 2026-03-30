@@ -69,8 +69,9 @@ func applyDefaultIOTimeouts(dsn string, queryTimeout time.Duration) (string, err
 	return mysqlCfg.FormatDSN(), nil
 }
 
-// applyStrictReadOnlyDSN merges session parameter transaction_read_only=ON so each new
+// applyStrictReadOnlyDSN sets session parameter transaction_read_only=ON so each new
 // physical connection executes SET via the driver (see go-sql-driver/mysql handleParams).
+// Any existing DSN value for this param is replaced so strict mode cannot be bypassed.
 func applyStrictReadOnlyDSN(dsn string, strict bool) (string, error) {
 	if !strict {
 		return dsn, nil
@@ -82,9 +83,8 @@ func applyStrictReadOnlyDSN(dsn string, strict bool) (string, error) {
 	if mysqlCfg.Params == nil {
 		mysqlCfg.Params = make(map[string]string)
 	}
-	if _, ok := mysqlCfg.Params["transaction_read_only"]; !ok {
-		mysqlCfg.Params["transaction_read_only"] = "ON"
-	}
+	// Always force ON so a DSN cannot override strict mode with OFF (or other values).
+	mysqlCfg.Params["transaction_read_only"] = "ON"
 	return mysqlCfg.FormatDSN(), nil
 }
 
