@@ -54,7 +54,7 @@ Steps (from `<repo-root>`)
    wait_docker_healthy mysql-mcp-test-84
 
 3) Run Sakila tests on MySQL 8.4
-   MYSQL_SAKILA_DSN="root:testpass@tcp(localhost:3307)/sakila?parseTime=true" \
+   MYSQL_SAKILA_DSN="mcpuser:mcppass00@tcp(localhost:3307)/sakila?parseTime=true" \
      go test -tags=integration ./tests/integration -run Sakila -v
 
 4) Start MySQL 9.0 from compose
@@ -64,7 +64,7 @@ Steps (from `<repo-root>`)
    wait_docker_healthy mysql-mcp-test-90
 
 6) Run Sakila tests on MySQL 9.0
-   MYSQL_SAKILA_DSN="root:testpass@tcp(localhost:3308)/sakila?parseTime=true" \
+   MYSQL_SAKILA_DSN="mcpuser:mcppass00@tcp(localhost:3308)/sakila?parseTime=true" \
      go test -tags=integration ./tests/integration -run Sakila -v
 
 7) Start MariaDB 11.4 from compose
@@ -74,7 +74,7 @@ Steps (from `<repo-root>`)
    wait_docker_healthy mysql-mcp-test-mariadb-11
 
 9) Run Sakila tests on MariaDB 11.4
-   MYSQL_SAKILA_DSN="root:testpass@tcp(localhost:3310)/sakila?parseTime=true" \
+   MYSQL_SAKILA_DSN="mcpuser:mcppass00@tcp(localhost:3310)/sakila?parseTime=true" \
      go test -tags=integration ./tests/integration -run Sakila -v
 
 10) Run MySQL 8.0 on alternate port (3306 was in use)
@@ -97,7 +97,7 @@ Steps (from `<repo-root>`)
     wait_mysqladmin_ping mysql-mcp-test-80-alt
 
 12) Run Sakila tests on MySQL 8.0 (alt port)
-    MYSQL_SAKILA_DSN="root:testpass@tcp(localhost:3311)/sakila?parseTime=true" \
+    MYSQL_SAKILA_DSN="mcpuser:mcppass00@tcp(localhost:3311)/sakila?parseTime=true" \
       go test -tags=integration ./tests/integration -run Sakila -v
 
 Cleanup (requested option 2)

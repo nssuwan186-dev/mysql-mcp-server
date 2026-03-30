@@ -104,6 +104,8 @@ brews:
       Config location:
         macOS: ~/Library/Application Support/Claude/claude_desktop_config.json
         Linux: ~/.config/Claude/claude_desktop_config.json
+
+      REST API: set MYSQL_MCP_HTTP=1 (and MYSQL_DSN). The token dashboard at http://localhost:9306/status is enabled by default; set MYSQL_MCP_TOKEN_CARD=0 to disable.
     test: |
       assert_match "mysql-mcp-server", shell_output("#{bin}/mysql-mcp-server --version")
 

@@ -186,6 +186,10 @@ func applyEnvOverrides(cfg *Config) {
 	if v := os.Getenv("MYSQL_MCP_TOKEN_CARD"); v != "" {
 		cfg.TokenCard = getEnvBool("MYSQL_MCP_TOKEN_CARD")
 	}
+	// When HTTP is enabled via MYSQL_MCP_HTTP, serve /status by default (e.g. brew, launchd). Set MYSQL_MCP_TOKEN_CARD=0 to disable.
+	if cfg.HTTPMode && os.Getenv("MYSQL_MCP_TOKEN_CARD") == "" && strings.TrimSpace(os.Getenv("MYSQL_MCP_HTTP")) != "" {
+		cfg.TokenCard = true
+	}
 	if v := os.Getenv("MYSQL_HTTP_PORT"); v != "" {
 		cfg.HTTPPort = getEnvInt("MYSQL_HTTP_PORT", cfg.HTTPPort)
 	}

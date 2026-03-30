@@ -7,6 +7,26 @@ Semantic Versioning.
 
 ## [Unreleased]
 
+## [1.7.0-rc.2] - 2026-03-30
+
+Second release candidate: integration-test identity, HTTP token UX, and compose port safety.
+
+### Added
+
+- **`mcpuser` / `mcppass00`** for integration tests and docs: `tests/sql/mcp_test_user.sql`, `mcp_test_user_sakila.sql`, mounted in `docker-compose.test.yml`; CI applies `mcp_test_user.sql` after `init.sql`; Makefile / QA / README / Sakila step docs use this DSN instead of `root` + `testpass`.
+- **`make test-sakila-local`**: run Sakila tests against a local MySQL when `MYSQL_TEST_DSN` or `MYSQL_SAKILA_DSN` is set (no Docker).
+
+### Changed
+
+- **HTTP REST**: when **`MYSQL_MCP_HTTP`** is set, **`GET /status`** (token dashboard) is **on by default**; set **`MYSQL_MCP_TOKEN_CARD=0`** to disable. Homebrew / GoReleaser caveats updated.
+- **Docker Compose (MySQL 8.0)**: host port **13306** → container **3306** so host **3306** can stay free for a local MySQL; Makefile and README DSN examples updated.
+
+### Fixed
+
+- Sakila integration test: clearer timeout / ping error hint (ports, Error 1045).
+
+---
+
 ## [1.7.0-rc.1] - 2026-03-29
 
 Release candidate: performance, observability, metadata discovery, and HTTP token dashboard. See [docs/releasing.md](docs/releasing.md) for tagging; GA will be **v1.7.0** after validation.

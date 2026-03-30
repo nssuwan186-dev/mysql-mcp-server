@@ -155,19 +155,20 @@ jobs:
         run: |
           # Use same init.sql as local Docker Compose for consistent schema
           mysql -h 127.0.0.1 -u root -ptestpass < tests/sql/init.sql
+          mysql -h 127.0.0.1 -u root -ptestpass < tests/sql/mcp_test_user.sql
           echo "Database initialized with test schema and data"
 
       - name: Run integration tests
         env:
-          MYSQL_DSN: "root:testpass@tcp(127.0.0.1:3306)/testdb?parseTime=true"
-          MYSQL_TEST_DSN: "root:testpass@tcp(127.0.0.1:3306)/testdb?parseTime=true"
+          MYSQL_DSN: "mcpuser:mcppass00@tcp(127.0.0.1:3306)/testdb?parseTime=true"
+          MYSQL_TEST_DSN: "mcpuser:mcppass00@tcp(127.0.0.1:3306)/testdb?parseTime=true"
         run: |
           # Run MCP server tests with real MySQL
           go test -v -tags=integration ./...
 
       - name: Test CLI startup
         env:
-          MYSQL_DSN: "root:testpass@tcp(127.0.0.1:3306)/testdb?parseTime=true"
+          MYSQL_DSN: "mcpuser:mcppass00@tcp(127.0.0.1:3306)/testdb?parseTime=true"
         run: |
           go build -o mysql-mcp-server ./cmd/mysql-mcp-server
           timeout 5 ./mysql-mcp-server 2>&1 || true
@@ -220,19 +221,20 @@ jobs:
         run: |
           # Use same init.sql as local Docker Compose for consistent schema
           mysql -h 127.0.0.1 -u root -ptestpass < tests/sql/init.sql
+          mysql -h 127.0.0.1 -u root -ptestpass < tests/sql/mcp_test_user.sql
           echo "Database initialized with test schema and data"
 
       - name: Run integration tests
         env:
-          MYSQL_DSN: "root:testpass@tcp(127.0.0.1:3306)/testdb?parseTime=true"
-          MYSQL_TEST_DSN: "root:testpass@tcp(127.0.0.1:3306)/testdb?parseTime=true"
+          MYSQL_DSN: "mcpuser:mcppass00@tcp(127.0.0.1:3306)/testdb?parseTime=true"
+          MYSQL_TEST_DSN: "mcpuser:mcppass00@tcp(127.0.0.1:3306)/testdb?parseTime=true"
         run: |
           # Run MCP server tests with real MariaDB
           go test -v -tags=integration ./...
 
       - name: Test CLI startup
         env:
-          MYSQL_DSN: "root:testpass@tcp(127.0.0.1:3306)/testdb?parseTime=true"
+          MYSQL_DSN: "mcpuser:mcppass00@tcp(127.0.0.1:3306)/testdb?parseTime=true"
         run: |
           go build -o mysql-mcp-server ./cmd/mysql-mcp-server
           timeout 5 ./mysql-mcp-server 2>&1 || true
@@ -349,6 +351,7 @@ jobs:
         run: |
           # Use same init.sql as local Docker Compose for consistent schema
           mysql -h 127.0.0.1 -u root -ptestpass < tests/sql/init.sql
+          mysql -h 127.0.0.1 -u root -ptestpass < tests/sql/mcp_test_user.sql
           echo "Database initialized with test schema and data"
 
       - name: Build server
@@ -356,7 +359,7 @@ jobs:
 
       - name: Start REST API server
         env:
-          MYSQL_DSN: "root:testpass@tcp(127.0.0.1:3306)/testdb?parseTime=true"
+          MYSQL_DSN: "mcpuser:mcppass00@tcp(127.0.0.1:3306)/testdb?parseTime=true"
           MYSQL_MCP_HTTP: "1"
           MYSQL_MCP_EXTENDED: "1"
         run: |

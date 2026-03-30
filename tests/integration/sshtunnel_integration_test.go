@@ -26,7 +26,7 @@ import (
 //
 //	MYSQL_SSH_HOST=localhost MYSQL_SSH_PORT=2222 MYSQL_SSH_USER=root \
 //	MYSQL_SSH_KEY_PATH=$PWD/tests/integration/fixtures/ssh_test_key \
-//	MYSQL_SSH_TEST_DSN="root:testpass@tcp(mysql80:3306)/testdb?parseTime=true" \
+//	MYSQL_SSH_TEST_DSN="mcpuser:mcppass00@tcp(mysql80:3306)/testdb?parseTime=true" \
 //	go test -tags=integration -v -run TestSSHTunnel ./tests/integration/...
 func TestSSHTunnel(t *testing.T) {
 	host := os.Getenv("MYSQL_SSH_HOST")

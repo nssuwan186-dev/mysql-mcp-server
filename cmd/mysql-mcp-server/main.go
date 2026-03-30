@@ -474,7 +474,7 @@ CONFIGURATION:
         MYSQL_MCP_JSON_LOGS          Enable JSON structured logging (set to 1)
         MYSQL_MCP_TOKEN_TRACKING     Enable token usage estimation (set to 1)
         MYSQL_MCP_TOKEN_MODEL        Tokenizer encoding to use (default: cl100k_base)
-        MYSQL_MCP_TOKEN_CARD         Enable live token monitoring UI at /status (set to 1, HTTP mode)
+        MYSQL_MCP_TOKEN_CARD         Live token UI at /status: on by default in HTTP mode; set to 0 to disable
         MYSQL_MCP_AUDIT_LOG          Path to audit log file
         MYSQL_MCP_VECTOR             Enable vector tools for MySQL 9.0+ (set to 1)
         MYSQL_MCP_HTTP               Enable REST API mode (set to 1)

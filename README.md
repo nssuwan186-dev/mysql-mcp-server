@@ -117,7 +117,7 @@ Environment variables:
 | MYSQL_MCP_JSON_LOGS | No | 0 | Enable JSON structured logging (set to 1) |
 | MYSQL_MCP_TOKEN_TRACKING | No | 0 | Enable estimated token usage tracking (set to 1) |
 | MYSQL_MCP_TOKEN_MODEL | No | cl100k_base | Tokenizer encoding to use for estimation |
-| MYSQL_MCP_TOKEN_CARD | No | 0 | HTTP mode: enable **`/status`** live token dashboard + listing in **`GET /api`** (set to 1) |
+| MYSQL_MCP_TOKEN_CARD | No | **on** when `MYSQL_MCP_HTTP` is set | **`/status`** live token dashboard + listing in **`GET /api`**; omit to use default **on**; set to **0** to disable |
 | MYSQL_MCP_AUDIT_LOG | No | – | Path to audit log file |
 | MYSQL_MCP_VECTOR | No | 0 | Enable vector tools for MySQL 9.0+ (set to 1) |
 | MYSQL_MCP_HTTP | No | 0 | Enable REST API mode (set to 1) |
@@ -970,15 +970,21 @@ make test-mysql-logs
 When running tests manually, set the DSN:
 
 ```bash
-# MySQL 8.0 (port 3306)
-export MYSQL_TEST_DSN="root:testpass@tcp(localhost:3306)/testdb?parseTime=true"
+# MySQL 8.0 (host port 13306 in docker-compose.test.yml — avoids local MySQL on 3306)
+export MYSQL_TEST_DSN="mcpuser:mcppass00@tcp(127.0.0.1:13306)/testdb?parseTime=true"
 
 # MySQL 8.4 (port 3307)
-export MYSQL_TEST_DSN="root:testpass@tcp(localhost:3307)/testdb?parseTime=true"
+export MYSQL_TEST_DSN="mcpuser:mcppass00@tcp(127.0.0.1:3307)/testdb?parseTime=true"
 
 # MySQL 9.0 (port 3308)
-export MYSQL_TEST_DSN="root:testpass@tcp(localhost:3308)/testdb?parseTime=true"
+export MYSQL_TEST_DSN="mcpuser:mcppass00@tcp(127.0.0.1:3308)/testdb?parseTime=true"
 ```
+
+Test credentials are **`mcpuser` / `mcppass00`** (see `tests/sql/mcp_test_user.sql`). After upgrading an existing Docker volume, recreate it so init scripts run: `docker compose -f docker-compose.test.yml down -v`.
+
+Prefer **`127.0.0.1`** over **`localhost`** when the database runs in Docker (especially on macOS): `localhost` may resolve to IPv6 (`::1`) while the published port is IPv4-only, causing connection timeouts until the DSN uses `127.0.0.1`.
+
+The **`mysql80`** service publishes **13306** on the host (not **3306**) so integration tests do not accidentally connect to a different MySQL instance already listening on **3306**.
 
 Then run tests directly:
 
@@ -1181,7 +1187,7 @@ Use `--silent` to suppress INFO/WARN logs when running under a service manager. 
 | POST | `/api/vector/search` | Vector similarity search |
 | GET | `/api/vector/info?database=` | Vector column info |
 
-**Token metrics** (requires `MYSQL_MCP_TOKEN_CARD=1` or `features.token_card`; HTTP mode):
+**Token metrics** (HTTP mode; **`/status`** defaults **on** when `MYSQL_MCP_HTTP` is set—use `MYSQL_MCP_TOKEN_CARD=0` to hide it; YAML `features.token_card` applies when not using that default):
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|

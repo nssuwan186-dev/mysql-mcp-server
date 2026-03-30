@@ -25,6 +25,7 @@ func clearEnv() {
 		"MYSQL_MCP_JSON_LOGS",
 		"MYSQL_MCP_TOKEN_TRACKING",
 		"MYSQL_MCP_TOKEN_MODEL",
+		"MYSQL_MCP_TOKEN_CARD",
 		"MYSQL_HTTP_PORT",
 		"MYSQL_MCP_AUDIT_LOG",
 		"MYSQL_SSL",
@@ -181,6 +182,23 @@ func TestLoadOverridesFromEnv(t *testing.T) {
 	}
 	if cfg.AuditLogPath != "/var/log/audit.log" {
 		t.Fatalf("expected AuditLogPath=/var/log/audit.log, got %s", cfg.AuditLogPath)
+	}
+	if !cfg.TokenCard {
+		t.Fatal("expected TokenCard true by default when HTTP mode is on and MYSQL_MCP_TOKEN_CARD is unset")
+	}
+}
+
+func TestHTTPModeTokenCardExplicitOff(t *testing.T) {
+	clearEnv()
+	os.Setenv("MYSQL_DSN", "user:pass@tcp(localhost:3306)/testdb")
+	os.Setenv("MYSQL_MCP_HTTP", "1")
+	os.Setenv("MYSQL_MCP_TOKEN_CARD", "0")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.TokenCard {
+		t.Fatal("expected TokenCard false when MYSQL_MCP_TOKEN_CARD=0")
 	}
 }
 

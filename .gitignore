@@ -23,3 +23,6 @@ review*.md
 # Local worktrees / stray clone dir at repo root (never commit)
 /.worktrees/
 /mysql-mcp-server
+
+# Local prerelease binary smoke-test download
+/.local-rc-test/

@@ -93,18 +93,24 @@ func setupSakilaDB(t *testing.T) *sql.DB {
 		t.Fatalf("failed to open database: %v", err)
 	}
 
-	// Wait for connection to be ready
+	// Wait for connection to be ready (use 127.0.0.1 in DSN on macOS; localhost can resolve to ::1 while Docker publishes IPv4 only)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
+	var lastPingErr error
 	for {
 		if err := db.PingContext(ctx); err == nil {
 			break
+		} else {
+			lastPingErr = err
 		}
 		select {
 		case <-time.After(1 * time.Second):
 			// retry
 		case <-ctx.Done():
+			if lastPingErr != nil {
+				t.Fatalf("database not ready within timeout (last ping: %v). Hint: use tcp(127.0.0.1:port); MySQL 8.0 test compose maps host 13306→container 3306. Error 1045 often means a different MySQL on that port (e.g. local install on 3306).", lastPingErr)
+			}
 			t.Fatalf("database not ready within timeout")
 		}
 	}
