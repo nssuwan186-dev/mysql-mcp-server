@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/askdba/mysql-mcp-server/internal/config"
+	"github.com/askdba/mysql-mcp-server/internal/util"
 )
 
 var allowedDatabaseSet map[string]struct{}
@@ -38,6 +39,25 @@ func requireAllowedDatabase(db string) error {
 	}
 	if !databaseAllowed(db) {
 		return fmt.Errorf("database %q is not in MYSQL_MCP_ALLOWED_DATABASES", db)
+	}
+	return nil
+}
+
+// requireReferencedSchemasInQuery ensures every explicitly schema-qualified
+// reference in sqlText (and USE / SHOW / EXPLAIN targets) is allowed when an
+// allowlist is configured.
+func requireReferencedSchemasInQuery(sqlText string) error {
+	if !accessControlEnabled() {
+		return nil
+	}
+	refs, err := util.ReferencedSchemaQualifiers(sqlText)
+	if err != nil {
+		return fmt.Errorf("query validation failed: %w", err)
+	}
+	for name := range refs {
+		if !databaseAllowed(name) {
+			return fmt.Errorf("query references database %q which is not in MYSQL_MCP_ALLOWED_DATABASES", name)
+		}
 	}
 	return nil
 }

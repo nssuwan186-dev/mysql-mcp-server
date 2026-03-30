@@ -152,6 +152,9 @@ func toolExplainQuery(
 			return nil, ExplainQueryOutput{}, err
 		}
 	}
+	if err := requireReferencedSchemasInQuery(sqlText); err != nil {
+		return nil, ExplainQueryOutput{}, err
+	}
 
 	ctx, cancel := context.WithTimeout(ctx, queryTimeout)
 	defer cancel()

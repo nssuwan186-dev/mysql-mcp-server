@@ -2,6 +2,7 @@
 package util
 
 import (
+	"sort"
 	"strings"
 	"testing"
 )
@@ -318,6 +319,57 @@ func TestValidateSQLCombined(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestReferencedSchemaQualifiers(t *testing.T) {
+	tests := []struct {
+		query string
+		want  []string
+	}{
+		{"SELECT * FROM users", nil},
+		{"SELECT * FROM other.t", []string{"other"}},
+		{"SELECT * FROM a.t JOIN b.u ON 1=1", []string{"a", "b"}},
+		{"SELECT * FROM users u WHERE u.id IN (SELECT x FROM other.t)", []string{"other"}},
+		{"SELECT 1 ORDER BY (SELECT a FROM other.t)", []string{"other"}},
+		{"SHOW TABLES FROM mydb", []string{"mydb"}},
+		{"USE myapp", []string{"myapp"}},
+		{"EXPLAIN SELECT 1 FROM z.t", []string{"z"}},
+		{"DESCRIBE otherdb.tbl", []string{"otherdb"}},
+	}
+	for _, tc := range tests {
+		name := tc.query
+		if len(name) > 50 {
+			name = name[:50] + "…"
+		}
+		t.Run(name, func(t *testing.T) {
+			got, err := ReferencedSchemaQualifiers(tc.query)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var names []string
+			for k := range got {
+				names = append(names, k)
+			}
+			sort.Strings(names)
+			exp := append([]string(nil), tc.want...)
+			sort.Strings(exp)
+			if len(names) != len(exp) {
+				t.Fatalf("got %v, want %v", names, exp)
+			}
+			for i := range names {
+				if names[i] != exp[i] {
+					t.Fatalf("got %v, want %v", names, exp)
+				}
+			}
+		})
+	}
+
+	t.Run("multi-statement rejected", func(t *testing.T) {
+		_, err := ReferencedSchemaQualifiers("SELECT 1 FROM a.t; SELECT 1 FROM b.t")
+		if err == nil {
+			t.Fatal("expected error")
+		}
+	})
 }
 
 func TestParserValidationError(t *testing.T) {

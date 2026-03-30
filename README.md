@@ -1238,6 +1238,8 @@ Use `--silent` to suppress INFO/WARN logs when running under a service manager. 
 | GET | `/api/foreign-keys?database=` | Foreign keys |
 | GET | `/api/status?pattern=` | Server status |
 | GET | `/api/variables?pattern=` | Server variables |
+| GET | `/api/processlist` | Active MySQL threads (`SHOW FULL PROCESSLIST`). Registered only when **`MYSQL_MCP_PROCESS_ADMIN=1`** (in addition to extended mode). Requires MySQL **`PROCESS`** privilege (or equivalent) to succeed. |
+| POST | `/api/kill` | Terminate a thread: JSON body `{"id": <positive integer>}` (same id as in **`/api/processlist`**). Registered only when **`MYSQL_MCP_PROCESS_ADMIN=1`**. Requires privilege to **`KILL`**. |
 
 **Vector endpoints** (requires `MYSQL_MCP_VECTOR=1`):
 

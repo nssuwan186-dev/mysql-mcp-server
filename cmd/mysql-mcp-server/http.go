@@ -390,8 +390,8 @@ func httpKillQuery(w http.ResponseWriter, r *http.Request) {
 		api.WriteBadRequest(w, "invalid JSON body: "+err.Error())
 		return
 	}
-	if input.ID == 0 {
-		api.WriteBadRequest(w, "id field is required")
+	if input.ID <= 0 {
+		api.WriteBadRequest(w, "id must be a positive integer")
 		return
 	}
 	ctx, cancel := httpContext(r)
@@ -414,6 +414,10 @@ func httpReadAuditLog(w http.ResponseWriter, r *http.Request) {
 			api.WriteBadRequest(w, "invalid lines parameter")
 			return
 		}
+		if n <= 0 {
+			api.WriteBadRequest(w, "lines must be a positive integer")
+			return
+		}
 	}
 	ctx, cancel := httpContext(r)
 	defer cancel()
@@ -427,7 +431,19 @@ func httpReadAuditLog(w http.ResponseWriter, r *http.Request) {
 
 // httpSlowQueryLog handles GET /api/slow-log?limit=20
 func httpSlowQueryLog(w http.ResponseWriter, r *http.Request) {
-	n, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	var n int
+	if s := r.URL.Query().Get("limit"); s != "" {
+		var err error
+		n, err = strconv.Atoi(s)
+		if err != nil {
+			api.WriteBadRequest(w, "invalid limit parameter")
+			return
+		}
+		if n <= 0 {
+			api.WriteBadRequest(w, "limit must be a positive integer")
+			return
+		}
+	}
 	ctx, cancel := httpContext(r)
 	defer cancel()
 	_, out, err := toolSlowQueryLogWrapped(ctx, nil, SlowQueryLogInput{Limit: n})

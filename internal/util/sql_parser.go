@@ -4,6 +4,7 @@ package util
 import (
 	"fmt"
 	"strings"
+	"unicode"
 
 	"github.com/xwb1989/sqlparser"
 )
@@ -329,6 +330,211 @@ func checkSubqueries(tableExpr sqlparser.TableExpr) error {
 	}
 
 	return nil
+}
+
+func addSchemaQualifier(out map[string]struct{}, qual sqlparser.TableIdent) {
+	s := strings.TrimSpace(qual.String())
+	if s == "" {
+		return
+	}
+	out[strings.ToLower(s)] = struct{}{}
+}
+
+func collectTableExprSchemas(tableExpr sqlparser.TableExpr, out map[string]struct{}) {
+	switch t := tableExpr.(type) {
+	case *sqlparser.AliasedTableExpr:
+		if tableName, ok := t.Expr.(sqlparser.TableName); ok {
+			addSchemaQualifier(out, tableName.Qualifier)
+		}
+		if subquery, ok := t.Expr.(*sqlparser.Subquery); ok {
+			collectSelectStatementSchemas(subquery.Select, out)
+		}
+	case *sqlparser.JoinTableExpr:
+		collectTableExprSchemas(t.LeftExpr, out)
+		collectTableExprSchemas(t.RightExpr, out)
+	case *sqlparser.ParenTableExpr:
+		for _, expr := range t.Exprs {
+			collectTableExprSchemas(expr, out)
+		}
+	}
+}
+
+func collectExprSubquerySchemas(expr sqlparser.SQLNode, out map[string]struct{}) {
+	if expr == nil {
+		return
+	}
+	_ = sqlparser.Walk(func(node sqlparser.SQLNode) (bool, error) {
+		if subquery, ok := node.(*sqlparser.Subquery); ok {
+			collectSelectStatementSchemas(subquery.Select, out)
+		}
+		return true, nil
+	}, expr)
+}
+
+func collectSelectSchemas(sel *sqlparser.Select, out map[string]struct{}) {
+	for _, tableExpr := range sel.From {
+		collectTableExprSchemas(tableExpr, out)
+	}
+	for _, expr := range sel.SelectExprs {
+		collectExprSubquerySchemas(expr, out)
+	}
+	if sel.Where != nil {
+		collectExprSubquerySchemas(sel.Where.Expr, out)
+	}
+	if sel.Having != nil {
+		collectExprSubquerySchemas(sel.Having.Expr, out)
+	}
+	for _, g := range sel.GroupBy {
+		collectExprSubquerySchemas(g, out)
+	}
+	for _, ob := range sel.OrderBy {
+		collectExprSubquerySchemas(ob.Expr, out)
+	}
+}
+
+func collectSelectStatementSchemas(stmt sqlparser.SelectStatement, out map[string]struct{}) {
+	switch s := stmt.(type) {
+	case *sqlparser.Select:
+		collectSelectSchemas(s, out)
+	case *sqlparser.Union:
+		collectSelectStatementSchemas(s.Left, out)
+		collectSelectStatementSchemas(s.Right, out)
+	case *sqlparser.ParenSelect:
+		collectSelectStatementSchemas(s.Select, out)
+	}
+}
+
+func stripOuterBackticks(s string) string {
+	s = strings.TrimSpace(s)
+	for strings.HasPrefix(s, "`") && strings.HasSuffix(s, "`") && len(s) >= 2 {
+		s = strings.TrimSpace(s[1 : len(s)-1])
+	}
+	return s
+}
+
+// schemaFromDescribeTableRef extracts the schema from DESCRIBE/DESC <ref>
+// when <ref> is schema-qualified (db.table).
+func schemaFromDescribeTableRef(rest string) string {
+	rest = strings.TrimSpace(rest)
+	if rest == "" {
+		return ""
+	}
+	var token string
+	if idx := strings.IndexFunc(rest, unicode.IsSpace); idx >= 0 {
+		token = rest[:idx]
+	} else {
+		token = rest
+	}
+	token = stripOuterBackticks(token)
+	if token == "" {
+		return ""
+	}
+	if idx := strings.Index(token, "."); idx > 0 {
+		return stripOuterBackticks(token[:idx])
+	}
+	return ""
+}
+
+func collectFromOtherRead(sqlText string, out map[string]struct{}) error {
+	u := strings.ToUpper(strings.TrimSpace(sqlText))
+	trimmed := strings.TrimSpace(sqlText)
+
+	for _, p := range []string{"EXPLAIN ANALYZE ", "EXPLAIN "} {
+		if len(u) >= len(p) && u[:len(p)] == strings.ToUpper(p) {
+			inner := strings.TrimSpace(trimmed[len(p):])
+			if inner == "" {
+				return nil
+			}
+			st, err := sqlparser.Parse(inner)
+			if err != nil {
+				return &ParserValidationError{
+					Reason:    "failed to parse SQL after EXPLAIN",
+					Statement: err.Error(),
+				}
+			}
+			collectStmtReferencedSchemas(st, out)
+			return nil
+		}
+	}
+	for _, p := range []string{"DESCRIBE ", "DESC "} {
+		if len(u) >= len(p) && u[:len(p)] == strings.ToUpper(p) {
+			rest := strings.TrimSpace(trimmed[len(p):])
+			if qual := schemaFromDescribeTableRef(rest); qual != "" {
+				out[strings.ToLower(qual)] = struct{}{}
+			}
+			return nil
+		}
+	}
+	return nil
+}
+
+func collectStmtReferencedSchemas(stmt sqlparser.Statement, out map[string]struct{}) {
+	switch s := stmt.(type) {
+	case *sqlparser.Select:
+		collectSelectSchemas(s, out)
+	case *sqlparser.ParenSelect:
+		collectSelectStatementSchemas(s.Select, out)
+	case *sqlparser.Union:
+		collectSelectStatementSchemas(s.Left, out)
+		collectSelectStatementSchemas(s.Right, out)
+	case *sqlparser.Show:
+		if s.HasOnTable() {
+			addSchemaQualifier(out, s.OnTable.Qualifier)
+		}
+		if s.ShowTablesOpt != nil {
+			if db := strings.TrimSpace(s.ShowTablesOpt.DbName); db != "" {
+				out[strings.ToLower(db)] = struct{}{}
+			}
+		}
+	case *sqlparser.Use:
+		addSchemaQualifier(out, s.DBName)
+	}
+}
+
+// ReferencedSchemaQualifiers returns the set of distinct, non-empty database
+// names explicitly referenced in the statement (table qualifiers, USE targets,
+// SHOW … FROM db, DESCRIBE db.t, and the inner statement of EXPLAIN). Names
+// are lowercased map keys. Unqualified table references are not listed; the
+// session default database applies to those.
+func ReferencedSchemaQualifiers(sqlText string) (map[string]struct{}, error) {
+	sqlText = strings.TrimSpace(sqlText)
+	if sqlText == "" {
+		return nil, &ParserValidationError{Reason: "empty query"}
+	}
+
+	statements, err := sqlparser.SplitStatementToPieces(sqlText)
+	if err != nil {
+		return nil, &ParserValidationError{
+			Reason:    "failed to parse SQL statement",
+			Statement: err.Error(),
+		}
+	}
+	if len(statements) > 1 {
+		return nil, &ParserValidationError{Reason: "multi-statement queries are not allowed"}
+	}
+	if len(statements) == 0 {
+		return nil, &ParserValidationError{Reason: "empty query"}
+	}
+	sqlText = statements[0]
+
+	stmt, err := sqlparser.Parse(sqlText)
+	if err != nil {
+		return nil, &ParserValidationError{
+			Reason:    "failed to parse SQL statement",
+			Statement: err.Error(),
+		}
+	}
+
+	out := make(map[string]struct{})
+	switch stmt.(type) {
+	case *sqlparser.OtherRead:
+		if err := collectFromOtherRead(sqlText, out); err != nil {
+			return nil, err
+		}
+	default:
+		collectStmtReferencedSchemas(stmt, out)
+	}
+	return out, nil
 }
 
 // ValidateSQLCombined performs both parser-based and regex-based validation.

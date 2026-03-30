@@ -341,6 +341,9 @@ func toolRunQuery(
 		}
 		return nil, QueryResult{}, fmt.Errorf("query validation failed: %w", err)
 	}
+	if err := requireReferencedSchemasInQuery(sqlText); err != nil {
+		return nil, QueryResult{}, err
+	}
 
 	limit := maxRows
 	if input.MaxRows != nil && *input.MaxRows > 0 && *input.MaxRows < maxRows {

@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/askdba/mysql-mcp-server/internal/util"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -151,7 +152,11 @@ func toolSlowQueryLog(
 	out := SlowQueryLogOutput{Settings: map[string]string{}}
 
 	var slowOn, logOutput string
-	_ = getDB().QueryRowContext(ctx, "SELECT @@slow_query_log, @@log_output").Scan(&slowOn, &logOutput)
+	if err := getDB().QueryRowContext(ctx, "SELECT @@slow_query_log, @@log_output").Scan(&slowOn, &logOutput); err != nil {
+		out.Mode = "error"
+		out.Message = fmt.Sprintf("could not read slow query log settings: %v", err)
+		return nil, out, nil
+	}
 	out.Settings["slow_query_log"] = slowOn
 	out.Settings["log_output"] = logOutput
 
@@ -207,7 +212,12 @@ func toolSlowQueryLog(
 			if raw[i] == nil {
 				v = ""
 			} else {
-				v = fmt.Sprint(raw[i])
+				switch x := util.NormalizeValue(raw[i]).(type) {
+				case string:
+					v = x
+				default:
+					v = fmt.Sprint(x)
+				}
 			}
 			switch strings.ToLower(col) {
 			case "start_time":
