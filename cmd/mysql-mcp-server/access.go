@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/askdba/mysql-mcp-server/internal/config"
@@ -16,6 +17,20 @@ func initAccessControl(allowed []string) {
 
 func accessControlEnabled() bool {
 	return len(allowedDatabaseSet) > 0
+}
+
+// allowedDatabasesLower returns allowlist entries as lowercase strings, sorted.
+// Used for SQL filters (e.g. mysql.slow_log.db) when accessControlEnabled().
+func allowedDatabasesLower() []string {
+	if !accessControlEnabled() {
+		return nil
+	}
+	out := make([]string, 0, len(allowedDatabaseSet))
+	for name := range allowedDatabaseSet {
+		out = append(out, name)
+	}
+	sort.Strings(out)
+	return out
 }
 
 func databaseAllowed(name string) bool {

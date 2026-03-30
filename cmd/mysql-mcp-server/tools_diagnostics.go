@@ -106,12 +106,12 @@ func toolKillQuery(
 	ctx, cancel := context.WithTimeout(ctx, queryTimeout)
 	defer cancel()
 
-	// Safe: id is numeric only.
-	q := fmt.Sprintf("KILL %d", input.ID)
+	// Safe: id is numeric only. KILL QUERY ends the current statement only; bare KILL drops the connection.
+	q := fmt.Sprintf("KILL QUERY %d", input.ID)
 	if _, err := getDB().ExecContext(ctx, q); err != nil {
 		return nil, KillQueryOutput{OK: false, Message: err.Error()}, nil
 	}
-	return nil, KillQueryOutput{OK: true, Message: fmt.Sprintf("KILL %d issued", input.ID)}, nil
+	return nil, KillQueryOutput{OK: true, Message: fmt.Sprintf("KILL QUERY %d issued", input.ID)}, nil
 }
 
 func toolReadAuditLog(
@@ -183,8 +183,28 @@ func toolSlowQueryLog(
 		return nil, out, nil
 	}
 
-	q := `SELECT * FROM mysql.slow_log ORDER BY start_time DESC LIMIT ?`
-	rows, err := getDB().QueryContext(ctx, q, limit)
+	var rows *sql.Rows
+	var err error
+	if accessControlEnabled() {
+		allowed := allowedDatabasesLower()
+		ph := strings.Repeat("?,", len(allowed))
+		if len(ph) > 0 {
+			ph = ph[:len(ph)-1]
+		}
+		q := fmt.Sprintf(
+			`SELECT * FROM mysql.slow_log WHERE LOWER(IFNULL(db, '')) IN (%s) ORDER BY start_time DESC LIMIT ?`,
+			ph,
+		)
+		args := make([]interface{}, 0, len(allowed)+1)
+		for _, db := range allowed {
+			args = append(args, db)
+		}
+		args = append(args, limit)
+		rows, err = getDB().QueryContext(ctx, q, args...)
+	} else {
+		rows, err = getDB().QueryContext(ctx,
+			`SELECT * FROM mysql.slow_log ORDER BY start_time DESC LIMIT ?`, limit)
+	}
 	if err != nil {
 		out.Mode = "error"
 		out.Message = fmt.Sprintf("could not read mysql.slow_log: %v", err)

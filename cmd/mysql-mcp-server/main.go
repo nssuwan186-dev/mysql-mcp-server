@@ -360,7 +360,7 @@ func registerExtendedTools(server *mcp.Server) {
 		}, toolProcessListWrapped)
 		mcp.AddTool(server, &mcp.Tool{
 			Name:        "kill_query",
-			Description: "Terminate a server thread by Id from process_list (KILL). Requires MYSQL_MCP_PROCESS_ADMIN=1.",
+			Description: "Cancel the currently executing statement for a connection using id from process_list (KILL QUERY; does not disconnect the client). Requires MYSQL_MCP_PROCESS_ADMIN=1.",
 		}, toolKillQueryWrapped)
 	}
 

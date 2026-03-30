@@ -156,11 +156,11 @@ type ProcessListOutput struct {
 }
 
 type KillQueryInput struct {
-	ID int64 `json:"id" jsonschema:"thread id from process_list to KILL"`
+	ID int64 `json:"id" jsonschema:"connection/thread id from process_list (KILL QUERY target)"`
 }
 
 type KillQueryOutput struct {
-	OK      bool   `json:"ok" jsonschema:"true if KILL executed"`
+	OK      bool   `json:"ok" jsonschema:"true if KILL QUERY executed"`
 	Message string `json:"message" jsonschema:"result message"`
 }
 

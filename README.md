@@ -907,9 +907,9 @@ export MYSQL_QUERY_TIMEOUT=30000    # Optional: timeout in ms (30 s) if you do n
 
 | Variable | Purpose |
 |----------|---------|
-| `MYSQL_MCP_ALLOWED_DATABASES` | Comma-separated schema allowlist. When set, tools that take a `database` argument must use an allowed name; `list_databases` / `database_size` only expose allowed schemas; `run_query` requires `database` and cannot be used to hop schemas via omission. |
+| `MYSQL_MCP_ALLOWED_DATABASES` | Comma-separated schema allowlist. When set, tools that take a `database` argument must use an allowed name; `list_databases` / `database_size` only expose allowed schemas; `run_query` requires `database` and cannot be used to hop schemas via omission. **`slow_query_log`** (table mode) only returns `mysql.slow_log` rows whose **`db`** column matches an allowed schema (case-insensitive); rows with null/empty `db` are omitted. |
 | `MYSQL_MCP_STRICT_READ_ONLY` | When `1`, new driver connections run with `transaction_read_only=ON` (harder to accidentally issue writes if grants allow them). |
-| `MYSQL_MCP_PROCESS_ADMIN` | Enables **`process_list`** and **`kill_query`** (and HTTP `/api/processlist`, `/api/kill`). Requires appropriate MySQL privileges (`PROCESS`, etc.). |
+| `MYSQL_MCP_PROCESS_ADMIN` | Enables **`process_list`** and **`kill_query`** (issues **`KILL QUERY`**, not connection kill; plus HTTP `/api/processlist`, `/api/kill`). Requires appropriate MySQL privileges (`CONNECTION_ADMIN` / `PROCESS`, etc.). |
 | `MYSQL_MCP_READ_AUDIT_TOOL` | Enables **`read_audit_log`** when **`MYSQL_MCP_AUDIT_LOG`** is set (tail of the audit JSON file). |
 | `MYSQL_MCP_SLOW_QUERY_TOOL` | Enables **`slow_query_log`** (reads `mysql.slow_log` when `log_output` includes `TABLE`, otherwise returns file settings). |
 
@@ -1239,7 +1239,7 @@ Use `--silent` to suppress INFO/WARN logs when running under a service manager. 
 | GET | `/api/status?pattern=` | Server status |
 | GET | `/api/variables?pattern=` | Server variables |
 | GET | `/api/processlist` | Active MySQL threads (`SHOW FULL PROCESSLIST`). Registered only when **`MYSQL_MCP_PROCESS_ADMIN=1`** (in addition to extended mode). Requires MySQL **`PROCESS`** privilege (or equivalent) to succeed. |
-| POST | `/api/kill` | Terminate a thread: JSON body `{"id": <positive integer>}` (same id as in **`/api/processlist`**). Registered only when **`MYSQL_MCP_PROCESS_ADMIN=1`**. Requires privilege to **`KILL`**. |
+| POST | `/api/kill` | Cancel the running statement: JSON body `{"id": <positive integer>}` (same connection id as **`/api/processlist`**); executes **`KILL QUERY`** (connection stays open). Registered only when **`MYSQL_MCP_PROCESS_ADMIN=1`**. Requires privilege to issue **`KILL QUERY`** / **`KILL`** for that thread (e.g. **`CONNECTION_ADMIN`** or **`PROCESS`** as applicable). |
 
 **Vector endpoints** (requires `MYSQL_MCP_VECTOR=1`):
 

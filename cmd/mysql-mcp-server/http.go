@@ -378,7 +378,7 @@ func httpProcessList(w http.ResponseWriter, r *http.Request) {
 	api.WriteSuccess(w, out)
 }
 
-// httpKillQuery handles POST /api/kill body {"id": 123}
+// httpKillQuery handles POST /api/kill body {"id": 123} (KILL QUERY).
 func httpKillQuery(w http.ResponseWriter, r *http.Request) {
 	var input KillQueryInput
 	if err := decodeJSONBody(w, r, &input); err != nil {
@@ -529,7 +529,7 @@ func httpAPIIndex(w http.ResponseWriter, r *http.Request) {
 		"GET  /api/status":          "Server status (optional ?pattern=) [extended]",
 		"GET  /api/variables":       "Server variables (optional ?pattern=) [extended]",
 		"GET  /api/processlist":     "Active threads [extended + MYSQL_MCP_PROCESS_ADMIN]",
-		"POST /api/kill":            "KILL thread id (body: {id}) [extended + admin]",
+		"POST /api/kill":            "KILL QUERY for thread id (body: {id}) [extended + admin]",
 		"GET  /api/audit-log":       "Tail audit log (optional ?lines=) [extended + MYSQL_MCP_READ_AUDIT_TOOL]",
 		"GET  /api/slow-log":        "Slow query log rows or settings [extended + MYSQL_MCP_SLOW_QUERY_TOOL]",
 		"POST /api/vector/search":   "Vector search (body: {...}) [vector]",
