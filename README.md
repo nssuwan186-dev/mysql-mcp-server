@@ -428,6 +428,21 @@ Add:
 }
 ```
 
+**Token dashboard (`/status`) in the same process as MCP:** Same behavior as Claude Desktop — stdio MCP does not open HTTP by default. Set **`MYSQL_MCP_TOKEN_TRACKING=1`**, **`MYSQL_MCP_METRICS_HTTP=1`**, and **`MYSQL_HTTP_PORT`** (default **9306**) for **`http://127.0.0.1:9306/status`** and **`/api/metrics/tokens`**. Do **not** set **`MYSQL_MCP_HTTP=1`** here (full REST replaces stdio MCP).
+
+```json
+"env": {
+  "MYSQL_DSN": "root:password@tcp(127.0.0.1:3306)/mydb?parseTime=true",
+  "MYSQL_MAX_ROWS": "200",
+  "MYSQL_MCP_EXTENDED": "1",
+  "MYSQL_MCP_TOKEN_TRACKING": "1",
+  "MYSQL_MCP_METRICS_HTTP": "1",
+  "MYSQL_HTTP_PORT": "9306"
+}
+```
+
+Restart Cursor after editing `mcp.json`.
+
 **With Docker:**
 
 ```json
