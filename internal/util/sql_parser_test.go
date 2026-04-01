@@ -334,6 +334,8 @@ func TestReferencedSchemaQualifiers(t *testing.T) {
 		{"SHOW TABLES FROM mydb", []string{"mydb"}},
 		{"USE myapp", []string{"myapp"}},
 		{"EXPLAIN SELECT 1 FROM z.t", []string{"z"}},
+		{"EXPLAIN FORMAT=JSON SELECT 1 FROM fmtjs.t", []string{"fmtjs"}},
+		{"EXPLAIN EXTENDED SELECT 1 FROM ext.t", []string{"ext"}},
 		{"DESCRIBE otherdb.tbl", []string{"otherdb"}},
 	}
 	for _, tc := range tests {
@@ -370,6 +372,20 @@ func TestReferencedSchemaQualifiers(t *testing.T) {
 			t.Fatal("expected error")
 		}
 	})
+}
+
+func TestCollectFromOtherReadNonExplain(t *testing.T) {
+	out := make(map[string]struct{})
+	ok, err := collectFromOtherRead("SELECT 1 FROM a.b", out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok {
+		t.Fatal("expected handled=false when text is not EXPLAIN/DESCRIBE")
+	}
+	if len(out) != 0 {
+		t.Fatalf("expected empty out, got %v", out)
+	}
 }
 
 func TestParserValidationError(t *testing.T) {

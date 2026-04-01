@@ -680,6 +680,7 @@ func toolServerInfo(
 		if err == nil {
 			defer func() { _ = stRows.Close() }()
 			var reads, reqs int64
+			var gotReads, gotReqs bool
 			for stRows.Next() {
 				var n, v string
 				if err := stRows.Scan(&n, &v); err != nil {
@@ -695,23 +696,27 @@ func toolServerInfo(
 					h.Questions = iv
 				case "innodb_buffer_pool_reads":
 					reads = iv
-					br := reads
-					h.BufferPoolReads = &br
+					gotReads = true
 				case "innodb_buffer_pool_read_requests":
 					reqs = iv
-					rr := reqs
-					h.BufferPoolReadRequests = &rr
+					gotReqs = true
 				}
 			}
-			if reqs > 0 {
-				hit := 100.0 * (1.0 - float64(reads)/float64(reqs))
-				if hit < 0 {
-					hit = 0
+			if gotReads && gotReqs {
+				br := reads
+				h.BufferPoolReads = &br
+				rr := reqs
+				h.BufferPoolReadRequests = &rr
+				if reqs > 0 {
+					hit := 100.0 * (1.0 - float64(reads)/float64(reqs))
+					if hit < 0 {
+						hit = 0
+					}
+					if hit > 100 {
+						hit = 100
+					}
+					h.BufferPoolHitPercent = &hit
 				}
-				if hit > 100 {
-					hit = 100
-				}
-				h.BufferPoolHitPercent = &hit
 			}
 		}
 		out.Health = h

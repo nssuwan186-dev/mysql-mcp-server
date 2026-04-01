@@ -3,11 +3,27 @@ package util
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 	"unicode"
 
 	"github.com/xwb1989/sqlparser"
 )
+
+// explainOptionPrefix matches EXPLAIN modifiers before the actual SELECT (FORMAT=…, EXTENDED, PARTITIONS).
+var explainOptionPrefix = regexp.MustCompile(`(?is)^(?:FORMAT\s*=\s*\w+\s+|EXTENDED\s+|PARTITIONS\s+)`)
+
+func stripLeadingExplainModifiers(s string) string {
+	s = strings.TrimSpace(s)
+	for i := 0; i < 8; i++ {
+		loc := explainOptionPrefix.FindStringIndex(s)
+		if loc == nil {
+			break
+		}
+		s = strings.TrimSpace(s[loc[1]:])
+	}
+	return s
+}
 
 // ParserValidationError contains details about why a query was rejected by the parser.
 type ParserValidationError struct {
@@ -435,7 +451,10 @@ func schemaFromDescribeTableRef(rest string) string {
 	return ""
 }
 
-func collectFromOtherRead(sqlText string, out map[string]struct{}) error {
+// collectFromOtherRead extracts schema references from statements the Vitess
+// parser exposes only as *sqlparser.OtherRead (EXPLAIN, DESCRIBE, …).
+// handled is false when the text is not a recognized EXPLAIN/DESCRIBE pattern.
+func collectFromOtherRead(sqlText string, out map[string]struct{}) (handled bool, err error) {
 	u := strings.ToUpper(strings.TrimSpace(sqlText))
 	trimmed := strings.TrimSpace(sqlText)
 
@@ -443,17 +462,21 @@ func collectFromOtherRead(sqlText string, out map[string]struct{}) error {
 		if len(u) >= len(p) && u[:len(p)] == strings.ToUpper(p) {
 			inner := strings.TrimSpace(trimmed[len(p):])
 			if inner == "" {
-				return nil
+				return true, nil
 			}
-			st, err := sqlparser.Parse(inner)
-			if err != nil {
-				return &ParserValidationError{
+			inner = stripLeadingExplainModifiers(inner)
+			if inner == "" {
+				return true, nil
+			}
+			st, perr := sqlparser.Parse(inner)
+			if perr != nil {
+				return true, &ParserValidationError{
 					Reason:    "failed to parse SQL after EXPLAIN",
-					Statement: err.Error(),
+					Statement: perr.Error(),
 				}
 			}
 			collectStmtReferencedSchemas(st, out)
-			return nil
+			return true, nil
 		}
 	}
 	for _, p := range []string{"DESCRIBE ", "DESC "} {
@@ -462,10 +485,10 @@ func collectFromOtherRead(sqlText string, out map[string]struct{}) error {
 			if qual := schemaFromDescribeTableRef(rest); qual != "" {
 				out[strings.ToLower(qual)] = struct{}{}
 			}
-			return nil
+			return true, nil
 		}
 	}
-	return nil
+	return false, nil
 }
 
 func collectStmtReferencedSchemas(stmt sqlparser.Statement, out map[string]struct{}) {
@@ -493,9 +516,10 @@ func collectStmtReferencedSchemas(stmt sqlparser.Statement, out map[string]struc
 
 // ReferencedSchemaQualifiers returns the set of distinct, non-empty database
 // names explicitly referenced in the statement (table qualifiers, USE targets,
-// SHOW … FROM db, DESCRIBE db.t, and the inner statement of EXPLAIN). Names
-// are lowercased map keys. Unqualified table references are not listed; the
-// session default database applies to those.
+// SHOW … FROM db, DESCRIBE db.t, and the inner statement of EXPLAIN, including
+// EXPLAIN FORMAT=… / EXTENDED / PARTITIONS prefixes). Names are lowercased map
+// keys. Unqualified table references are not listed; the session default
+// database applies to those.
 func ReferencedSchemaQualifiers(sqlText string) (map[string]struct{}, error) {
 	sqlText = strings.TrimSpace(sqlText)
 	if sqlText == "" {
@@ -528,8 +552,15 @@ func ReferencedSchemaQualifiers(sqlText string) (map[string]struct{}, error) {
 	out := make(map[string]struct{})
 	switch stmt.(type) {
 	case *sqlparser.OtherRead:
-		if err := collectFromOtherRead(sqlText, out); err != nil {
+		ok, err := collectFromOtherRead(sqlText, out)
+		if err != nil {
 			return nil, err
+		}
+		if !ok {
+			return nil, &ParserValidationError{
+				Reason:    "cannot extract schema references from this statement type",
+				Statement: "use SELECT or standard EXPLAIN SELECT / DESCRIBE",
+			}
 		}
 	default:
 		collectStmtReferencedSchemas(stmt, out)

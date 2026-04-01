@@ -160,10 +160,9 @@ func toolSlowQueryLog(
 	out.Settings["slow_query_log"] = slowOn
 	out.Settings["log_output"] = logOutput
 
-	var sq int64
-	var slowName string
-	if err := getDB().QueryRowContext(ctx, "SHOW GLOBAL STATUS LIKE 'Slow_queries'").Scan(&slowName, &sq); err == nil {
-		out.SlowQueries = sq
+	var slowName, slowVal string
+	if err := getDB().QueryRowContext(ctx, "SHOW GLOBAL STATUS LIKE 'Slow_queries'").Scan(&slowName, &slowVal); err == nil {
+		out.SlowQueries, _ = strconv.ParseInt(strings.TrimSpace(slowVal), 10, 64)
 	}
 
 	if strings.EqualFold(slowOn, "OFF") || slowOn == "0" {
