@@ -678,6 +678,7 @@ func toolServerInfo(
 				`SHOW GLOBAL STATUS WHERE Variable_name IN ('Threads_running','Slow_queries','Questions','Innodb_buffer_pool_read_requests','Innodb_buffer_pool_reads')`)
 		}
 		if err == nil {
+			defer func() { _ = stRows.Close() }()
 			var reads, reqs int64
 			for stRows.Next() {
 				var n, v string
@@ -702,7 +703,6 @@ func toolServerInfo(
 					h.BufferPoolReadRequests = &rr
 				}
 			}
-			_ = stRows.Close()
 			if reqs > 0 {
 				hit := 100.0 * (1.0 - float64(reads)/float64(reqs))
 				if hit < 0 {
