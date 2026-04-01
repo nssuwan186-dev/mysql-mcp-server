@@ -515,25 +515,36 @@ func httpAPIIndex(w http.ResponseWriter, r *http.Request) {
 		"GET  /api/connections":     "List connections",
 		"POST /api/connections/use": "Switch connection (body: {name})",
 		"GET  /api/metrics/tokens":  "Live token usage metrics (cumulative since startup)",
-		"GET  /api/indexes":         "List indexes (requires ?database=&table=) [extended]",
-		"GET  /api/create-table":    "Show CREATE TABLE (requires ?database=&table=) [extended]",
-		"POST /api/explain":         "Explain query (body: {sql, database?}) [extended]",
-		"GET  /api/views":           "List views (requires ?database=) [extended]",
-		"GET  /api/triggers":        "List triggers (requires ?database=) [extended]",
-		"GET  /api/procedures":      "List procedures (requires ?database=) [extended]",
-		"GET  /api/functions":       "List functions (requires ?database=) [extended]",
-		"GET  /api/partitions":      "List table partitions (requires ?database=&table=) [extended]",
-		"GET  /api/size/database":   "Database size (optional ?database=) [extended]",
-		"GET  /api/size/tables":     "Table sizes (requires ?database=) [extended]",
-		"GET  /api/foreign-keys":    "Foreign keys (requires ?database=, optional &table=) [extended]",
-		"GET  /api/status":          "Server status (optional ?pattern=) [extended]",
-		"GET  /api/variables":       "Server variables (optional ?pattern=) [extended]",
-		"GET  /api/processlist":     "Active threads [extended + MYSQL_MCP_PROCESS_ADMIN]",
-		"POST /api/kill":            "KILL QUERY for thread id (body: {id}) [extended + admin]",
-		"GET  /api/audit-log":       "Tail audit log (optional ?lines=) [extended + MYSQL_MCP_READ_AUDIT_TOOL]",
-		"GET  /api/slow-log":        "Slow query log rows or settings [extended + MYSQL_MCP_SLOW_QUERY_TOOL]",
-		"POST /api/vector/search":   "Vector search (body: {...}) [vector]",
-		"GET  /api/vector/info":     "Vector info (requires ?database=) [vector]",
+	}
+	if extendedMode {
+		endpoints["GET  /api/indexes"] = "List indexes (requires ?database=&table=) [extended]"
+		endpoints["GET  /api/create-table"] = "Show CREATE TABLE (requires ?database=&table=) [extended]"
+		endpoints["POST /api/explain"] = "Explain query (body: {sql, database?}) [extended]"
+		endpoints["GET  /api/views"] = "List views (requires ?database=) [extended]"
+		endpoints["GET  /api/triggers"] = "List triggers (requires ?database=) [extended]"
+		endpoints["GET  /api/procedures"] = "List procedures (requires ?database=) [extended]"
+		endpoints["GET  /api/functions"] = "List functions (requires ?database=) [extended]"
+		endpoints["GET  /api/partitions"] = "List table partitions (requires ?database=&table=) [extended]"
+		endpoints["GET  /api/size/database"] = "Database size (optional ?database=) [extended]"
+		endpoints["GET  /api/size/tables"] = "Table sizes (requires ?database=) [extended]"
+		endpoints["GET  /api/foreign-keys"] = "Foreign keys (requires ?database=, optional &table=) [extended]"
+		endpoints["GET  /api/status"] = "Server status (optional ?pattern=) [extended]"
+		endpoints["GET  /api/variables"] = "Server variables (optional ?pattern=) [extended]"
+		if cfg.ProcessAdmin {
+			endpoints["GET  /api/processlist"] = "Active threads [extended + MYSQL_MCP_PROCESS_ADMIN]"
+			endpoints["POST /api/kill"] = "KILL QUERY for thread id (body: {id}) [extended + admin]"
+		}
+		readAuditOK := cfg.ReadAuditTool && auditLogger != nil && auditLogger.enabled && cfg.AuditLogPath != ""
+		if readAuditOK {
+			endpoints["GET  /api/audit-log"] = "Tail audit log (optional ?lines=) [extended + MYSQL_MCP_READ_AUDIT_TOOL]"
+		}
+		if cfg.SlowQueryTool {
+			endpoints["GET  /api/slow-log"] = "Slow query log rows or settings [extended + MYSQL_MCP_SLOW_QUERY_TOOL]"
+		}
+	}
+	if cfg.VectorMode {
+		endpoints["POST /api/vector/search"] = "Vector search (body: {...}) [vector]"
+		endpoints["GET  /api/vector/info"] = "Vector info (requires ?database=) [vector]"
 	}
 	if tokenCard {
 		endpoints["GET  /status"] = "Token Tracking Card live dashboard [token-card]"

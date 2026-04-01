@@ -511,7 +511,52 @@ func collectStmtReferencedSchemas(stmt sqlparser.Statement, out map[string]struc
 		}
 	case *sqlparser.Use:
 		addSchemaQualifier(out, s.DBName)
+	case *sqlparser.Insert:
+		addSchemaQualifier(out, s.Table.Qualifier)
+	case *sqlparser.Update:
+		for _, te := range s.TableExprs {
+			collectTableExprSchemas(te, out)
+		}
+		if s.Where != nil {
+			collectExprSubquerySchemas(s.Where.Expr, out)
+		}
+	case *sqlparser.Delete:
+		for _, te := range s.TableExprs {
+			collectTableExprSchemas(te, out)
+		}
+		if s.Where != nil {
+			collectExprSubquerySchemas(s.Where.Expr, out)
+		}
 	}
+}
+
+// ShowEnumeratesAllSchemas reports whether stmt lists every schema on the server
+// (e.g. SHOW DATABASES). Used to enforce allowlist policy in callers.
+func ShowEnumeratesAllSchemas(stmt sqlparser.Statement) bool {
+	s, ok := stmt.(*sqlparser.Show)
+	if !ok {
+		return false
+	}
+	t := strings.TrimSpace(strings.ToLower(s.Type))
+	return t == "databases" || strings.HasPrefix(t, "databases ")
+}
+
+// ShowEnumeratesAllSchemasInQuery parses a single SQL statement and returns true
+// for SHOW DATABASES (including LIKE variants the parser types as "databases").
+func ShowEnumeratesAllSchemasInQuery(sqlText string) bool {
+	sqlText = strings.TrimSpace(sqlText)
+	if sqlText == "" {
+		return false
+	}
+	statements, err := sqlparser.SplitStatementToPieces(sqlText)
+	if err != nil || len(statements) != 1 {
+		return false
+	}
+	stmt, err := sqlparser.Parse(strings.TrimSpace(statements[0]))
+	if err != nil {
+		return false
+	}
+	return ShowEnumeratesAllSchemas(stmt)
 }
 
 // ReferencedSchemaQualifiers returns the set of distinct, non-empty database

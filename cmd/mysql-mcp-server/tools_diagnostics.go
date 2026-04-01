@@ -186,6 +186,11 @@ func toolSlowQueryLog(
 	var err error
 	if accessControlEnabled() {
 		allowed := allowedDatabasesLower()
+		if len(allowed) == 0 {
+			out.Mode = "error"
+			out.Message = "database allowlist is empty; cannot query mysql.slow_log"
+			return nil, out, nil
+		}
 		ph := strings.Repeat("?,", len(allowed))
 		if len(ph) > 0 {
 			ph = ph[:len(ph)-1]

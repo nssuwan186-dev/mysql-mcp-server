@@ -65,6 +65,9 @@ func requireReferencedSchemasInQuery(sqlText string) error {
 	if !accessControlEnabled() {
 		return nil
 	}
+	if util.ShowEnumeratesAllSchemasInQuery(sqlText) {
+		return fmt.Errorf("SHOW DATABASES is not allowed when MYSQL_MCP_ALLOWED_DATABASES is set; use the list_databases tool instead")
+	}
 	refs, err := util.ReferencedSchemaQualifiers(sqlText)
 	if err != nil {
 		return fmt.Errorf("query validation failed: %w", err)
