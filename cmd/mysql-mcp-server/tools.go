@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/askdba/mysql-mcp-server/internal/util"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -42,6 +43,9 @@ func toolListDatabases(
 		if err := rows.Scan(&name); err != nil {
 			return nil, ListDatabasesOutput{}, fmt.Errorf("scan failed: %w", err)
 		}
+		if !databaseAllowed(name) {
+			continue
+		}
 		out.Databases = append(out.Databases, DatabaseInfo{Name: name})
 		if len(out.Databases) >= maxRows {
 			break
@@ -66,6 +70,9 @@ func toolListTables(
 
 	if strings.TrimSpace(input.Database) == "" {
 		return nil, ListTablesOutput{}, fmt.Errorf("database is required")
+	}
+	if err := requireAllowedDatabase(input.Database); err != nil {
+		return nil, ListTablesOutput{}, err
 	}
 
 	ctx, cancel := context.WithTimeout(ctx, queryTimeout)
@@ -161,6 +168,9 @@ func toolDescribeTable(
 	}
 	if strings.TrimSpace(input.Table) == "" {
 		return nil, DescribeTableOutput{}, fmt.Errorf("table is required")
+	}
+	if err := requireAllowedDatabase(input.Database); err != nil {
+		return nil, DescribeTableOutput{}, err
 	}
 
 	ctx, cancel := context.WithTimeout(ctx, queryTimeout)
@@ -296,6 +306,14 @@ func toolRunQuery(
 		return nil, QueryResult{}, fmt.Errorf("sql is required")
 	}
 	database := strings.TrimSpace(input.Database)
+	if accessControlEnabled() {
+		if database == "" {
+			return nil, QueryResult{}, fmt.Errorf("database is required when MYSQL_MCP_ALLOWED_DATABASES is set")
+		}
+		if err := requireAllowedDatabase(database); err != nil {
+			return nil, QueryResult{}, err
+		}
+	}
 
 	// Token estimation (optional)
 	inputTokens, _ := estimateTokensForValue(input)
@@ -322,6 +340,9 @@ func toolRunQuery(
 			})
 		}
 		return nil, QueryResult{}, fmt.Errorf("query validation failed: %w", err)
+	}
+	if err := requireReferencedSchemasInQuery(sqlText); err != nil {
+		return nil, QueryResult{}, err
 	}
 
 	limit := maxRows
@@ -619,6 +640,86 @@ func toolServerInfo(
 	row = getDB().QueryRowContext(ctx, "SELECT CURRENT_USER(), IFNULL(DATABASE(), '')")
 	if err := row.Scan(&out.CurrentUser, &out.CurrentDatabase); err != nil {
 		return nil, ServerInfoOutput{}, fmt.Errorf("failed to get current user/database: %w", err)
+	}
+
+	if tokenTracking {
+		s := globalTokenMetrics.Snapshot()
+		out.TokenMetrics = &ServerTokenSnapshot{
+			ToolCalls:         s.QueryCount,
+			TotalInputTokens:  s.TotalInputTokens,
+			TotalOutputTokens: s.TotalOutputTokens,
+			TotalTokens:       s.TotalTokens,
+			MetricsUptimeSec:  s.UptimeSeconds,
+		}
+	}
+
+	if input.Detailed {
+		h := &ServerHealthSnapshot{}
+		pctx, pcancel := context.WithTimeout(ctx, pingTimeout)
+		t0 := time.Now()
+		_ = getDB().PingContext(pctx)
+		pcancel()
+		h.PingLatencyMs = time.Since(t0).Milliseconds()
+
+		keyVars := []string{
+			"Threads_running", "Slow_queries", "Questions",
+			"Innodb_buffer_pool_read_requests", "Innodb_buffer_pool_reads",
+		}
+		ph := strings.Repeat("?,", len(keyVars))
+		ph = ph[:len(ph)-1]
+		q := fmt.Sprintf(`SELECT VARIABLE_NAME, VARIABLE_VALUE FROM performance_schema.global_status WHERE VARIABLE_NAME IN (%s)`, ph)
+		args := make([]interface{}, len(keyVars))
+		for i := range keyVars {
+			args[i] = keyVars[i]
+		}
+		stRows, err := getDB().QueryContext(ctx, q, args...)
+		if err != nil {
+			stRows, err = getDB().QueryContext(ctx,
+				`SHOW GLOBAL STATUS WHERE Variable_name IN ('Threads_running','Slow_queries','Questions','Innodb_buffer_pool_read_requests','Innodb_buffer_pool_reads')`)
+		}
+		if err == nil {
+			defer func() { _ = stRows.Close() }()
+			var reads, reqs int64
+			var gotReads, gotReqs bool
+			for stRows.Next() {
+				var n, v string
+				if err := stRows.Scan(&n, &v); err != nil {
+					continue
+				}
+				iv, _ := strconv.ParseInt(v, 10, 64)
+				switch strings.ToLower(n) {
+				case "threads_running":
+					h.ThreadsRunning = int(iv)
+				case "slow_queries":
+					h.SlowQueries = iv
+				case "questions":
+					h.Questions = iv
+				case "innodb_buffer_pool_reads":
+					reads = iv
+					gotReads = true
+				case "innodb_buffer_pool_read_requests":
+					reqs = iv
+					gotReqs = true
+				}
+			}
+			if gotReads && gotReqs {
+				br := reads
+				h.BufferPoolReads = &br
+				rr := reqs
+				h.BufferPoolReadRequests = &rr
+				if reqs > 0 {
+					hit := 100.0 * (1.0 - float64(reads)/float64(reqs))
+					if hit < 0 {
+						hit = 0
+					}
+					if hit > 100 {
+						hit = 100
+					}
+					h.BufferPoolHitPercent = &hit
+				}
+			}
+		}
+		out.Health = h
 	}
 
 	return nil, out, nil

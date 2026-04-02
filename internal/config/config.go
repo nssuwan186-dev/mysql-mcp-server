@@ -82,6 +82,13 @@ type Config struct {
 
 	// Audit logging
 	AuditLogPath string
+
+	// Security / access (optional)
+	AllowedDatabases []string // Empty = all databases allowed (subject to MySQL grants)
+	StrictReadOnly   bool     // SET transaction_read_only=ON on each driver connection (DSN param)
+	ProcessAdmin     bool     // Enable process_list and kill_query (extended tools)
+	ReadAuditTool    bool     // Enable read_audit_log when AuditLogPath is set (extended)
+	SlowQueryTool    bool     // Enable slow_query_log tool (extended)
 }
 
 // Load reads configuration from config file (if present) and environment variables.
@@ -219,6 +226,46 @@ func applyEnvOverrides(cfg *Config) {
 	if cfg.HTTPMode {
 		cfg.MetricsHTTP = false // full REST API replaces metrics-only sidecar
 	}
+	if v := os.Getenv("MYSQL_MCP_ALLOWED_DATABASES"); v != "" {
+		cfg.AllowedDatabases = parseCSVList(v)
+	}
+	if v := os.Getenv("MYSQL_MCP_STRICT_READ_ONLY"); v != "" {
+		cfg.StrictReadOnly = getEnvBool("MYSQL_MCP_STRICT_READ_ONLY")
+	}
+	if v := os.Getenv("MYSQL_MCP_PROCESS_ADMIN"); v != "" {
+		cfg.ProcessAdmin = getEnvBool("MYSQL_MCP_PROCESS_ADMIN")
+	}
+	if v := os.Getenv("MYSQL_MCP_READ_AUDIT_TOOL"); v != "" {
+		cfg.ReadAuditTool = getEnvBool("MYSQL_MCP_READ_AUDIT_TOOL")
+	}
+	if v := os.Getenv("MYSQL_MCP_SLOW_QUERY_TOOL"); v != "" {
+		cfg.SlowQueryTool = getEnvBool("MYSQL_MCP_SLOW_QUERY_TOOL")
+	}
+}
+
+// parseCSVList splits comma-separated values, trims space, drops empties.
+func parseCSVList(s string) []string {
+	parts := strings.Split(s, ",")
+	var out []string
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// AllowedDatabaseSet builds a case-insensitive lookup set for schema names.
+func AllowedDatabaseSet(list []string) map[string]struct{} {
+	m := make(map[string]struct{})
+	for _, s := range list {
+		s = strings.TrimSpace(s)
+		if s != "" {
+			m[strings.ToLower(s)] = struct{}{}
+		}
+	}
+	return m
 }
 
 // loadConnections loads DSN configurations from environment variables.

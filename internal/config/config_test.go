@@ -29,6 +29,11 @@ func clearEnv() {
 		"MYSQL_MCP_TOKEN_CARD",
 		"MYSQL_HTTP_PORT",
 		"MYSQL_MCP_AUDIT_LOG",
+		"MYSQL_MCP_ALLOWED_DATABASES",
+		"MYSQL_MCP_STRICT_READ_ONLY",
+		"MYSQL_MCP_PROCESS_ADMIN",
+		"MYSQL_MCP_READ_AUDIT_TOOL",
+		"MYSQL_MCP_SLOW_QUERY_TOOL",
 		"MYSQL_SSL",
 	}
 	for _, v := range envVars {
@@ -516,5 +521,29 @@ func TestMySQLQueryTimeoutSecondsTakesPrecedenceOverMs(t *testing.T) {
 	// MYSQL_QUERY_TIMEOUT_SECONDS must take precedence
 	if cfg.QueryTimeout != 60*time.Second {
 		t.Fatalf("expected QueryTimeout=60s (MYSQL_QUERY_TIMEOUT_SECONDS wins), got %v", cfg.QueryTimeout)
+	}
+}
+
+func TestSecurityEnvOverrides(t *testing.T) {
+	clearEnv()
+	_ = os.Setenv("MYSQL_DSN", "user:pass@tcp(localhost:3306)/db")
+	_ = os.Setenv("MYSQL_MCP_ALLOWED_DATABASES", " a , b, c ")
+	_ = os.Setenv("MYSQL_MCP_STRICT_READ_ONLY", "1")
+	_ = os.Setenv("MYSQL_MCP_PROCESS_ADMIN", "1")
+	_ = os.Setenv("MYSQL_MCP_READ_AUDIT_TOOL", "true")
+	_ = os.Setenv("MYSQL_MCP_SLOW_QUERY_TOOL", "y")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.AllowedDatabases) != 3 || cfg.AllowedDatabases[0] != "a" {
+		t.Fatalf("allowed db list: %#v", cfg.AllowedDatabases)
+	}
+	if !cfg.StrictReadOnly || !cfg.ProcessAdmin || !cfg.ReadAuditTool || !cfg.SlowQueryTool {
+		t.Fatalf("flags: strict=%v admin=%v audit=%v slow=%v", cfg.StrictReadOnly, cfg.ProcessAdmin, cfg.ReadAuditTool, cfg.SlowQueryTool)
+	}
+	set := AllowedDatabaseSet(cfg.AllowedDatabases)
+	if len(set) != 3 {
+		t.Fatalf("set len %d", len(set))
 	}
 }

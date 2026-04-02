@@ -2,6 +2,7 @@
 package util
 
 import (
+	"sort"
 	"strings"
 	"testing"
 )
@@ -317,6 +318,98 @@ func TestValidateSQLCombined(t *testing.T) {
 				t.Errorf("unexpected error: %v\nQuery: %s", err, tc.query)
 			}
 		})
+	}
+}
+
+func TestReferencedSchemaQualifiers(t *testing.T) {
+	tests := []struct {
+		query string
+		want  []string
+	}{
+		{"SELECT * FROM users", nil},
+		{"SELECT * FROM other.t", []string{"other"}},
+		{"SELECT * FROM a.t JOIN b.u ON 1=1", []string{"a", "b"}},
+		{"SELECT * FROM users u WHERE u.id IN (SELECT x FROM other.t)", []string{"other"}},
+		{"SELECT 1 ORDER BY (SELECT a FROM other.t)", []string{"other"}},
+		{"SHOW TABLES FROM mydb", []string{"mydb"}},
+		{"USE myapp", []string{"myapp"}},
+		{"EXPLAIN SELECT 1 FROM z.t", []string{"z"}},
+		{"EXPLAIN FORMAT=JSON SELECT 1 FROM fmtjs.t", []string{"fmtjs"}},
+		{"EXPLAIN EXTENDED SELECT 1 FROM ext.t", []string{"ext"}},
+		{"DESCRIBE otherdb.tbl", []string{"otherdb"}},
+	}
+	for _, tc := range tests {
+		name := tc.query
+		if len(name) > 50 {
+			name = name[:50] + "…"
+		}
+		t.Run(name, func(t *testing.T) {
+			got, err := ReferencedSchemaQualifiers(tc.query)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var names []string
+			for k := range got {
+				names = append(names, k)
+			}
+			sort.Strings(names)
+			exp := append([]string(nil), tc.want...)
+			sort.Strings(exp)
+			if len(names) != len(exp) {
+				t.Fatalf("got %v, want %v", names, exp)
+			}
+			for i := range names {
+				if names[i] != exp[i] {
+					t.Fatalf("got %v, want %v", names, exp)
+				}
+			}
+		})
+	}
+
+	t.Run("multi-statement rejected", func(t *testing.T) {
+		_, err := ReferencedSchemaQualifiers("SELECT 1 FROM a.t; SELECT 1 FROM b.t")
+		if err == nil {
+			t.Fatal("expected error")
+		}
+	})
+}
+
+func TestShowEnumeratesAllSchemasInQuery(t *testing.T) {
+	if !ShowEnumeratesAllSchemasInQuery("SHOW DATABASES") {
+		t.Fatal("expected true for SHOW DATABASES")
+	}
+	if !ShowEnumeratesAllSchemasInQuery("SHOW DATABASES LIKE 'p%' ") {
+		t.Fatal("expected true for SHOW DATABASES LIKE")
+	}
+	if ShowEnumeratesAllSchemasInQuery("SHOW TABLES") {
+		t.Fatal("expected false for SHOW TABLES")
+	}
+	if ShowEnumeratesAllSchemasInQuery("SELECT 1") {
+		t.Fatal("expected false for SELECT")
+	}
+}
+
+func TestReferencedSchemaQualifiersExplainDML(t *testing.T) {
+	got, err := ReferencedSchemaQualifiers("EXPLAIN DELETE FROM otherdb.t WHERE id=1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := got["otherdb"]; !ok {
+		t.Fatalf("expected otherdb in %v", got)
+	}
+}
+
+func TestCollectFromOtherReadNonExplain(t *testing.T) {
+	out := make(map[string]struct{})
+	ok, err := collectFromOtherRead("SELECT 1 FROM a.b", out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok {
+		t.Fatal("expected handled=false when text is not EXPLAIN/DESCRIBE")
+	}
+	if len(out) != 0 {
+		t.Fatalf("expected empty out, got %v", out)
 	}
 }
 

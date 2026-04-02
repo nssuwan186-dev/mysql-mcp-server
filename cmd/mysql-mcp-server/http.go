@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -130,7 +131,8 @@ func httpPing(w http.ResponseWriter, r *http.Request) {
 func httpServerInfo(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := httpContext(r)
 	defer cancel()
-	_, out, err := toolServerInfoWrapped(ctx, nil, ServerInfoInput{})
+	detailed := r.URL.Query().Get("detailed") == "1" || strings.EqualFold(r.URL.Query().Get("detailed"), "true")
+	_, out, err := toolServerInfoWrapped(ctx, nil, ServerInfoInput{Detailed: detailed})
 	if err != nil {
 		api.WriteInternalError(w, err.Error())
 		return
@@ -364,6 +366,94 @@ func httpListVariables(w http.ResponseWriter, r *http.Request) {
 	api.WriteSuccess(w, out)
 }
 
+// httpProcessList handles GET /api/processlist
+func httpProcessList(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := httpContext(r)
+	defer cancel()
+	_, out, err := toolProcessListWrapped(ctx, nil, ProcessListInput{})
+	if err != nil {
+		api.WriteInternalError(w, err.Error())
+		return
+	}
+	api.WriteSuccess(w, out)
+}
+
+// httpKillQuery handles POST /api/kill body {"id": 123} (KILL QUERY).
+func httpKillQuery(w http.ResponseWriter, r *http.Request) {
+	var input KillQueryInput
+	if err := decodeJSONBody(w, r, &input); err != nil {
+		var mbe *http.MaxBytesError
+		if errors.As(err, &mbe) {
+			api.WriteError(w, http.StatusRequestEntityTooLarge, "request body too large")
+			return
+		}
+		api.WriteBadRequest(w, "invalid JSON body: "+err.Error())
+		return
+	}
+	if input.ID <= 0 {
+		api.WriteBadRequest(w, "id must be a positive integer")
+		return
+	}
+	ctx, cancel := httpContext(r)
+	defer cancel()
+	_, out, err := toolKillQueryWrapped(ctx, nil, input)
+	if err != nil {
+		api.WriteInternalError(w, err.Error())
+		return
+	}
+	api.WriteSuccess(w, out)
+}
+
+// httpReadAuditLog handles GET /api/audit-log?lines=50
+func httpReadAuditLog(w http.ResponseWriter, r *http.Request) {
+	var n int
+	if s := r.URL.Query().Get("lines"); s != "" {
+		var err error
+		n, err = strconv.Atoi(s)
+		if err != nil {
+			api.WriteBadRequest(w, "invalid lines parameter")
+			return
+		}
+		if n <= 0 {
+			api.WriteBadRequest(w, "lines must be a positive integer")
+			return
+		}
+	}
+	ctx, cancel := httpContext(r)
+	defer cancel()
+	_, out, err := toolReadAuditLogWrapped(ctx, nil, ReadAuditLogInput{Lines: n})
+	if err != nil {
+		api.WriteInternalError(w, err.Error())
+		return
+	}
+	api.WriteSuccess(w, out)
+}
+
+// httpSlowQueryLog handles GET /api/slow-log?limit=20
+func httpSlowQueryLog(w http.ResponseWriter, r *http.Request) {
+	var n int
+	if s := r.URL.Query().Get("limit"); s != "" {
+		var err error
+		n, err = strconv.Atoi(s)
+		if err != nil {
+			api.WriteBadRequest(w, "invalid limit parameter")
+			return
+		}
+		if n <= 0 {
+			api.WriteBadRequest(w, "limit must be a positive integer")
+			return
+		}
+	}
+	ctx, cancel := httpContext(r)
+	defer cancel()
+	_, out, err := toolSlowQueryLogWrapped(ctx, nil, SlowQueryLogInput{Limit: n})
+	if err != nil {
+		api.WriteInternalError(w, err.Error())
+		return
+	}
+	api.WriteSuccess(w, out)
+}
+
 // ===== Vector HTTP Handlers =====
 
 // httpVectorSearch handles POST /api/vector/search
@@ -421,25 +511,40 @@ func httpAPIIndex(w http.ResponseWriter, r *http.Request) {
 		"GET  /api/describe":        "Describe table (requires ?database=&table=)",
 		"POST /api/query":           "Run SQL query (body: {sql, database?, max_rows?})",
 		"GET  /api/ping":            "Ping database",
-		"GET  /api/server-info":     "Get server info",
+		"GET  /api/server-info":     "Get server info (optional ?detailed=1 for health metrics)",
 		"GET  /api/connections":     "List connections",
 		"POST /api/connections/use": "Switch connection (body: {name})",
 		"GET  /api/metrics/tokens":  "Live token usage metrics (cumulative since startup)",
-		"GET  /api/indexes":         "List indexes (requires ?database=&table=) [extended]",
-		"GET  /api/create-table":    "Show CREATE TABLE (requires ?database=&table=) [extended]",
-		"POST /api/explain":         "Explain query (body: {sql, database?}) [extended]",
-		"GET  /api/views":           "List views (requires ?database=) [extended]",
-		"GET  /api/triggers":        "List triggers (requires ?database=) [extended]",
-		"GET  /api/procedures":      "List procedures (requires ?database=) [extended]",
-		"GET  /api/functions":       "List functions (requires ?database=) [extended]",
-		"GET  /api/partitions":      "List table partitions (requires ?database=&table=) [extended]",
-		"GET  /api/size/database":   "Database size (optional ?database=) [extended]",
-		"GET  /api/size/tables":     "Table sizes (requires ?database=) [extended]",
-		"GET  /api/foreign-keys":    "Foreign keys (requires ?database=, optional &table=) [extended]",
-		"GET  /api/status":          "Server status (optional ?pattern=) [extended]",
-		"GET  /api/variables":       "Server variables (optional ?pattern=) [extended]",
-		"POST /api/vector/search":   "Vector search (body: {...}) [vector]",
-		"GET  /api/vector/info":     "Vector info (requires ?database=) [vector]",
+	}
+	if extendedMode {
+		endpoints["GET  /api/indexes"] = "List indexes (requires ?database=&table=) [extended]"
+		endpoints["GET  /api/create-table"] = "Show CREATE TABLE (requires ?database=&table=) [extended]"
+		endpoints["POST /api/explain"] = "Explain query (body: {sql, database?}) [extended]"
+		endpoints["GET  /api/views"] = "List views (requires ?database=) [extended]"
+		endpoints["GET  /api/triggers"] = "List triggers (requires ?database=) [extended]"
+		endpoints["GET  /api/procedures"] = "List procedures (requires ?database=) [extended]"
+		endpoints["GET  /api/functions"] = "List functions (requires ?database=) [extended]"
+		endpoints["GET  /api/partitions"] = "List table partitions (requires ?database=&table=) [extended]"
+		endpoints["GET  /api/size/database"] = "Database size (optional ?database=) [extended]"
+		endpoints["GET  /api/size/tables"] = "Table sizes (requires ?database=) [extended]"
+		endpoints["GET  /api/foreign-keys"] = "Foreign keys (requires ?database=, optional &table=) [extended]"
+		endpoints["GET  /api/status"] = "Server status (optional ?pattern=) [extended]"
+		endpoints["GET  /api/variables"] = "Server variables (optional ?pattern=) [extended]"
+		if cfg.ProcessAdmin {
+			endpoints["GET  /api/processlist"] = "Active threads [extended + MYSQL_MCP_PROCESS_ADMIN]"
+			endpoints["POST /api/kill"] = "KILL QUERY for thread id (body: {id}) [extended + admin]"
+		}
+		readAuditOK := cfg.ReadAuditTool && auditLogger != nil && auditLogger.enabled && cfg.AuditLogPath != ""
+		if readAuditOK {
+			endpoints["GET  /api/audit-log"] = "Tail audit log (optional ?lines=) [extended + MYSQL_MCP_READ_AUDIT_TOOL]"
+		}
+		if cfg.SlowQueryTool {
+			endpoints["GET  /api/slow-log"] = "Slow query log rows or settings [extended + MYSQL_MCP_SLOW_QUERY_TOOL]"
+		}
+	}
+	if cfg.VectorMode {
+		endpoints["POST /api/vector/search"] = "Vector search (body: {...}) [vector]"
+		endpoints["GET  /api/vector/info"] = "Vector info (requires ?database=) [vector]"
 	}
 	if tokenCard {
 		endpoints["GET  /status"] = "Token Tracking Card live dashboard [token-card]"
@@ -648,6 +753,21 @@ func startHTTPServer(port int, vectorMode bool, tokenCardEnabled bool) {
 	mux.HandleFunc("/api/foreign-keys", api.Chain(httpForeignKeys, api.WithCORS, extendedFeature, api.RequireQueryParam("database")))
 	mux.HandleFunc("/api/status", api.Chain(httpListStatus, api.WithCORS, extendedFeature))
 	mux.HandleFunc("/api/variables", api.Chain(httpListVariables, api.WithCORS, extendedFeature))
+
+	processAdminFeature := func(next http.HandlerFunc) http.HandlerFunc {
+		return api.RequireFeature(cfg.ProcessAdmin, "process admin tools (set MYSQL_MCP_PROCESS_ADMIN=1)", next)
+	}
+	readAuditFeature := func(next http.HandlerFunc) http.HandlerFunc {
+		ok := cfg.ReadAuditTool && auditLogger != nil && auditLogger.enabled && cfg.AuditLogPath != ""
+		return api.RequireFeature(ok, "read_audit_log (MYSQL_MCP_READ_AUDIT_TOOL=1 and MYSQL_MCP_AUDIT_LOG)", next)
+	}
+	slowQueryFeature := func(next http.HandlerFunc) http.HandlerFunc {
+		return api.RequireFeature(cfg.SlowQueryTool, "slow_query_log (set MYSQL_MCP_SLOW_QUERY_TOOL=1)", next)
+	}
+	mux.HandleFunc("/api/processlist", api.Chain(httpProcessList, api.WithCORS, extendedFeature, processAdminFeature))
+	mux.HandleFunc("/api/kill", api.Chain(httpKillQuery, api.WithCORS, extendedFeature, processAdminFeature, api.RequirePOST))
+	mux.HandleFunc("/api/audit-log", api.Chain(httpReadAuditLog, api.WithCORS, extendedFeature, readAuditFeature))
+	mux.HandleFunc("/api/slow-log", api.Chain(httpSlowQueryLog, api.WithCORS, extendedFeature, slowQueryFeature))
 
 	// Vector endpoints
 	vectorFeature := func(next http.HandlerFunc) http.HandlerFunc {
