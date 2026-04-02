@@ -128,9 +128,9 @@ Environment variables:
 | MYSQL_MCP_TOKEN_MODEL | No | cl100k_base | Tokenizer encoding to use for estimation |
 | MYSQL_MCP_TOKEN_CARD | No | **on** when `MYSQL_MCP_HTTP` is set | **`/status`** live token dashboard + listing in **`GET /api`**; omit to use default **on**; set to **0** to disable |
 | MYSQL_MCP_AUDIT_LOG | No | – | Path to audit log file |
-| MYSQL_MCP_ALLOWED_DATABASES | No | – | Comma-separated schema allowlist (empty = all allowed) |
+| MYSQL_MCP_ALLOWED_DATABASES | No | – | Comma-separated schema allowlist (empty = all allowed). With an allowlist, **`run_query`** rejects **`SHOW DATABASES`** / **`SHOW DATABASES LIKE`**—use **`list_databases`**. |
 | MYSQL_MCP_STRICT_READ_ONLY | No | 0 | Set `1` to enable `transaction_read_only=ON` on new connections |
-| MYSQL_MCP_PROCESS_ADMIN | No | 0 | Set `1` to enable `process_list` / `kill_query` (extended) |
+| MYSQL_MCP_PROCESS_ADMIN | No | 0 | Set `1` to enable **`process_list`** / **`kill_query`** (extended); **`kill_query`** issues **`KILL QUERY`** (cancels the running statement only, not the connection) |
 | MYSQL_MCP_READ_AUDIT_TOOL | No | 0 | Set `1` to enable `read_audit_log` when audit path is set |
 | MYSQL_MCP_SLOW_QUERY_TOOL | No | 0 | Set `1` to enable `slow_query_log` tool (extended) |
 | MYSQL_MCP_VECTOR | No | 0 | Enable vector tools for MySQL 9.0+ (set to 1) |
@@ -907,7 +907,7 @@ export MYSQL_QUERY_TIMEOUT=30000    # Optional: timeout in ms (30 s) if you do n
 
 | Variable | Purpose |
 |----------|---------|
-| `MYSQL_MCP_ALLOWED_DATABASES` | Comma-separated schema allowlist. When set, tools that take a `database` argument must use an allowed name; `list_databases` / `database_size` only expose allowed schemas; `run_query` requires `database` and cannot be used to hop schemas via omission. **`slow_query_log`** (table mode) only returns `mysql.slow_log` rows whose **`db`** column matches an allowed schema (case-insensitive); rows with null/empty `db` are omitted. |
+| `MYSQL_MCP_ALLOWED_DATABASES` | Comma-separated schema allowlist. When set, tools that take a `database` argument must use an allowed name; `list_databases` / `database_size` only expose allowed schemas; `run_query` requires `database` and cannot be used to hop schemas via omission. **`run_query`** rejects **`SHOW DATABASES`** and **`SHOW DATABASES LIKE`** (use **`list_databases`**). Qualified names in SQL, **`EXPLAIN`** (including **`FORMAT=`** / **`EXTENDED`**), and inner DML in **`EXPLAIN`** are checked against the allowlist. **`slow_query_log`** (table mode) only returns `mysql.slow_log` rows whose **`db`** column matches an allowed schema (case-insensitive); rows with null/empty `db` are omitted. |
 | `MYSQL_MCP_STRICT_READ_ONLY` | When `1`, new driver connections run with `transaction_read_only=ON` (harder to accidentally issue writes if grants allow them). |
 | `MYSQL_MCP_PROCESS_ADMIN` | Enables **`process_list`** and **`kill_query`** (issues **`KILL QUERY`**, not connection kill; plus HTTP `/api/processlist`, `/api/kill`). Requires appropriate MySQL privileges (`CONNECTION_ADMIN` / `PROCESS`, etc.). |
 | `MYSQL_MCP_READ_AUDIT_TOOL` | Enables **`read_audit_log`** when **`MYSQL_MCP_AUDIT_LOG`** is set (tail of the audit JSON file). |
@@ -1208,10 +1208,12 @@ Use `--silent` to suppress INFO/WARN logs when running under a service manager. 
 
 ### API Endpoints
 
+**Discovery (`GET /api`):** The JSON response includes an **`endpoints`** map that lists **only routes the server has registered** for the current configuration—same rules as the mux: core routes always; extended routes only if **`MYSQL_MCP_EXTENDED=1`**; **`/api/processlist`** and **`/api/kill`** only if extended **and** **`MYSQL_MCP_PROCESS_ADMIN=1`**; **`/api/audit-log`** only if extended **and** read-audit is enabled (**`MYSQL_MCP_READ_AUDIT_TOOL=1`** with **`MYSQL_MCP_AUDIT_LOG`**); **`/api/slow-log`** only if extended **and** **`MYSQL_MCP_SLOW_QUERY_TOOL=1`**; vector routes only if **`MYSQL_MCP_VECTOR=1`**; **`/status`** appears in the index only when the token card is enabled. **`modes`** in the JSON reflects **`extended`**, **`vector`**, and **`token_card`**.
+
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | GET | `/health` | Health check |
-| GET | `/api` | API index with all endpoints |
+| GET | `/api` | API index: registered endpoints + **`modes`** (see Discovery above) |
 | GET | `/api/databases` | List databases |
 | GET | `/api/tables?database=` | List tables |
 | GET | `/api/describe?database=&table=` | Describe table |
@@ -1238,8 +1240,10 @@ Use `--silent` to suppress INFO/WARN logs when running under a service manager. 
 | GET | `/api/foreign-keys?database=` | Foreign keys |
 | GET | `/api/status?pattern=` | Server status |
 | GET | `/api/variables?pattern=` | Server variables |
-| GET | `/api/processlist` | Active MySQL threads (`SHOW FULL PROCESSLIST`). Registered only when **`MYSQL_MCP_PROCESS_ADMIN=1`** (in addition to extended mode). Requires MySQL **`PROCESS`** privilege (or equivalent) to succeed. |
-| POST | `/api/kill` | Cancel the running statement: JSON body `{"id": <positive integer>}` (same connection id as **`/api/processlist`**); executes **`KILL QUERY`** (connection stays open). Registered only when **`MYSQL_MCP_PROCESS_ADMIN=1`**. Requires privilege to issue **`KILL QUERY`** / **`KILL`** for that thread (e.g. **`CONNECTION_ADMIN`** or **`PROCESS`** as applicable). |
+| GET | `/api/audit-log?lines=` | Tail lines from the MCP audit log (JSON). Listed only when extended **and** **`MYSQL_MCP_READ_AUDIT_TOOL=1`** with **`MYSQL_MCP_AUDIT_LOG`** configured. |
+| GET | `/api/slow-log?limit=` | Slow query log rows or file/table settings. Listed only when extended **and** **`MYSQL_MCP_SLOW_QUERY_TOOL=1`**. |
+| GET | `/api/processlist` | Active MySQL threads (`SHOW FULL PROCESSLIST`). Listed only when extended **and** **`MYSQL_MCP_PROCESS_ADMIN=1`**. Requires MySQL **`PROCESS`** (or equivalent) to succeed. |
+| POST | `/api/kill` | Cancel the **current statement** on a connection: JSON body `{"id": <positive integer>}` (same id as **`/api/processlist`**). Executes **`KILL QUERY`**—the client connection stays open. Listed only when extended **and** **`MYSQL_MCP_PROCESS_ADMIN=1`**. Requires privilege to run **`KILL QUERY`** for that thread (e.g. **`CONNECTION_ADMIN`** or **`PROCESS`** as applicable). |
 
 **Vector endpoints** (requires `MYSQL_MCP_VECTOR=1`):
 
