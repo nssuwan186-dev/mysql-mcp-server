@@ -650,6 +650,223 @@ func toolListVariables(
 	return nil, out, nil
 }
 
+func toolSearchSchema(
+	ctx context.Context,
+	req *mcp.CallToolRequest,
+	input SearchSchemaInput,
+) (*mcp.CallToolResult, SearchSchemaOutput, error) {
+	if input.Pattern == "" {
+		return nil, SearchSchemaOutput{}, fmt.Errorf("pattern is required")
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, queryTimeout)
+	defer cancel()
+
+	out := SearchSchemaOutput{Matches: []SchemaMatch{}}
+
+	// 1. Search for matching tables
+	tableQuery := `SELECT TABLE_SCHEMA, TABLE_NAME 
+		FROM information_schema.TABLES 
+		WHERE TABLE_NAME LIKE ?`
+	var tableArgs []interface{}
+	tableArgs = append(tableArgs, input.Pattern)
+
+	if input.Database != "" {
+		tableQuery += " AND TABLE_SCHEMA = ?"
+		tableArgs = append(tableArgs, input.Database)
+	} else {
+		tableQuery += " AND TABLE_SCHEMA NOT IN ('information_schema', 'performance_schema', 'mysql', 'sys')"
+	}
+	tableQuery += " LIMIT ?"
+	tableArgs = append(tableArgs, maxRows)
+
+	rows, err := getDB().QueryContext(ctx, tableQuery, tableArgs...)
+	if err != nil {
+		return nil, SearchSchemaOutput{}, fmt.Errorf("table search failed: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var m SchemaMatch
+		if err := rows.Scan(&m.Database, &m.Table); err != nil {
+			continue
+		}
+		m.Type = "TABLE"
+		out.Matches = append(out.Matches, m)
+	}
+
+	// 2. Search for matching columns
+	colQuery := `SELECT TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME 
+		FROM information_schema.COLUMNS 
+		WHERE COLUMN_NAME LIKE ?`
+	var colArgs []interface{}
+	colArgs = append(colArgs, input.Pattern)
+
+	if input.Database != "" {
+		colQuery += " AND TABLE_SCHEMA = ?"
+		colArgs = append(colArgs, input.Database)
+	} else {
+		colQuery += " AND TABLE_SCHEMA NOT IN ('information_schema', 'performance_schema', 'mysql', 'sys')"
+	}
+	colQuery += " LIMIT ?"
+	colArgs = append(colArgs, maxRows-len(out.Matches))
+
+	if len(out.Matches) < maxRows {
+		crows, err := getDB().QueryContext(ctx, colQuery, colArgs...)
+		if err != nil {
+			return nil, SearchSchemaOutput{}, fmt.Errorf("column search failed: %w", err)
+		}
+		defer crows.Close()
+
+		for crows.Next() {
+			var m SchemaMatch
+			if err := crows.Scan(&m.Database, &m.Table, &m.Column); err != nil {
+				continue
+			}
+			m.Type = "COLUMN"
+			out.Matches = append(out.Matches, m)
+		}
+	}
+
+	return nil, out, nil
+}
+
+func toolSchemaDiff(
+	ctx context.Context,
+	req *mcp.CallToolRequest,
+	input SchemaDiffInput,
+) (*mcp.CallToolResult, SchemaDiffOutput, error) {
+	if input.SourceDatabase == "" || input.TargetDatabase == "" {
+		return nil, SchemaDiffOutput{}, fmt.Errorf("source_database and target_database are required")
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, queryTimeout)
+	defer cancel()
+
+	out := SchemaDiffOutput{
+		SourceDatabase: input.SourceDatabase,
+		TargetDatabase: input.TargetDatabase,
+		Diffs:          []DiffResult{},
+	}
+
+	// Get tables from source
+	sourceTables := make(map[string]bool)
+	rows, err := getDB().QueryContext(ctx, "SELECT TABLE_NAME FROM information_schema.TABLES WHERE TABLE_SCHEMA = ?", input.SourceDatabase)
+	if err != nil {
+		return nil, SchemaDiffOutput{}, fmt.Errorf("failed to list source tables: %w", err)
+	}
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err == nil {
+			sourceTables[name] = true
+		}
+	}
+	rows.Close()
+
+	// Get tables from target
+	targetTables := make(map[string]bool)
+	rows, err = getDB().QueryContext(ctx, "SELECT TABLE_NAME FROM information_schema.TABLES WHERE TABLE_SCHEMA = ?", input.TargetDatabase)
+	if err != nil {
+		return nil, SchemaDiffOutput{}, fmt.Errorf("failed to list target tables: %w", err)
+	}
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err == nil {
+			targetTables[name] = true
+		}
+	}
+	rows.Close()
+
+	// Compare tables
+	for name := range sourceTables {
+		if !targetTables[name] {
+			out.Diffs = append(out.Diffs, DiffResult{
+				Table:  name,
+				Status: "MISSING",
+				Details: fmt.Sprintf("Table exists in %s but missing in %s", input.SourceDatabase, input.TargetDatabase),
+			})
+		}
+	}
+
+	for name := range targetTables {
+		if !sourceTables[name] {
+			out.Diffs = append(out.Diffs, DiffResult{
+				Table:  name,
+				Status: "EXTRA",
+				Details: fmt.Sprintf("Table exists in %s but missing in %s", input.TargetDatabase, input.SourceDatabase),
+			})
+		} else {
+			// Table exists in both, compare columns
+			diff, err := compareTableSchema(ctx, input.SourceDatabase, input.TargetDatabase, name)
+			if err != nil {
+				return nil, SchemaDiffOutput{}, err
+			}
+			if diff != "" {
+				out.Diffs = append(out.Diffs, DiffResult{
+					Table:   name,
+					Status:  "CHANGED",
+					Details: diff,
+				})
+			}
+		}
+	}
+
+	return nil, out, nil
+}
+
+func compareTableSchema(ctx context.Context, sourceDB, targetDB, table string) (string, error) {
+	query := `SELECT COLUMN_NAME, COLUMN_TYPE, IS_NULLABLE, COLUMN_DEFAULT 
+		FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? 
+		ORDER BY COLUMN_NAME`
+
+	getSourceCols := func(dbName string) (map[string]string, error) {
+		rows, err := getDB().QueryContext(ctx, query, dbName, table)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+
+		cols := make(map[string]string)
+		for rows.Next() {
+			var name, ctype, nullable, def sql.NullString
+			if err := rows.Scan(&name, &ctype, &nullable, &def); err == nil {
+				cols[name.String] = fmt.Sprintf("%s, Null:%s, Def:%s", ctype.String, nullable.String, def.String)
+			}
+		}
+		return cols, nil
+	}
+
+	sCols, err := getSourceCols(sourceDB)
+	if err != nil {
+		return "", err
+	}
+	tCols, err := getSourceCols(targetDB)
+	if err != nil {
+		return "", err
+	}
+
+	var diffs []string
+	for name, sDef := range sCols {
+		tDef, exists := tCols[name]
+		if !exists {
+			diffs = append(diffs, fmt.Sprintf("Column %s missing in %s", name, targetDB))
+		} else if sDef != tDef {
+			diffs = append(diffs, fmt.Sprintf("Column %s differs: %s (src) vs %s (tgt)", name, sDef, tDef))
+		}
+	}
+
+	for name := range tCols {
+		if _, exists := sCols[name]; !exists {
+			diffs = append(diffs, fmt.Sprintf("Column %s extra in %s", name, targetDB))
+		}
+	}
+
+	if len(diffs) == 0 {
+		return "", nil
+	}
+	return strings.Join(diffs, "; "), nil
+}
+
 // ===== Vector Tool Handlers (MySQL 9.0+) =====
 
 func toolVectorSearch(

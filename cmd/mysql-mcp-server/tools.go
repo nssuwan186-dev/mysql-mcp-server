@@ -298,6 +298,11 @@ func toolRunQuery(
 		return nil, QueryResult{}, err
 	}
 
+	// Apply column masking if configured
+	if cfg != nil && len(cfg.MaskColumns) > 0 {
+		maskResults(result.Columns, result.Rows, cfg.MaskColumns)
+	}
+
 	// Token estimation for output (optional)
 	outputTokens, _ := estimateTokensForValue(result)
 	tokens.OutputEstimated = outputTokens
@@ -537,4 +542,33 @@ func toolUseConnection(
 		Message:  message,
 		Database: currentDB.String,
 	}, nil
+}
+
+func maskResults(cols []string, rows [][]interface{}, patterns []string) {
+	if len(patterns) == 0 {
+		return
+	}
+
+	maskIndices := make(map[int]bool)
+	for i, col := range cols {
+		lowerCol := strings.ToLower(col)
+		for _, p := range patterns {
+			if strings.Contains(lowerCol, strings.ToLower(p)) {
+				maskIndices[i] = true
+				break
+			}
+		}
+	}
+
+	if len(maskIndices) == 0 {
+		return
+	}
+
+	for _, row := range rows {
+		for idx := range maskIndices {
+			if idx < len(row) && row[idx] != nil {
+				row[idx] = "********"
+			}
+		}
+	}
 }

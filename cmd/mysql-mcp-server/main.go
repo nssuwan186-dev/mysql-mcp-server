@@ -379,6 +379,16 @@ func registerExtendedTools(server *mcp.Server) {
 		Name:        "list_variables",
 		Description: "List MySQL server configuration variables",
 	}, toolListVariablesWrapped)
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "search_schema",
+		Description: "Find tables and columns matching a pattern across databases",
+	}, toolSearchSchemaWrapped)
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "schema_diff",
+		Description: "Compare the schema between two databases",
+	}, toolSchemaDiffWrapped)
 }
 
 // ===== Config File Commands =====

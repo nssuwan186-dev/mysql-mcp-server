@@ -76,4 +76,7 @@ var (
 	toolForeignKeysWrapped     = wrapTool("foreign_keys", toolForeignKeys)
 	toolListStatusWrapped      = wrapTool("list_status", toolListStatus)
 	toolListVariablesWrapped   = wrapTool("list_variables", toolListVariables)
+
+	toolSearchSchemaWrapped = wrapTool("search_schema", toolSearchSchema)
+	toolSchemaDiffWrapped   = wrapTool("schema_diff", toolSchemaDiff)
 )

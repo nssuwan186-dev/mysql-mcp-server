@@ -343,3 +343,36 @@ type ServerVariable struct {
 type ListVariablesOutput struct {
 	Variables []ServerVariable `json:"variables" jsonschema:"server configuration variables"`
 }
+
+type SearchSchemaInput struct {
+	Pattern  string `json:"pattern" jsonschema:"search pattern for table or column names (uses SQL LIKE syntax, e.g., %user%)"`
+	Database string `json:"database,omitempty" jsonschema:"optional database name to restrict search"`
+}
+
+type SchemaMatch struct {
+	Database string `json:"database" jsonschema:"database name"`
+	Table    string `json:"table" jsonschema:"table name"`
+	Column   string `json:"column,omitempty" jsonschema:"column name (if matched)"`
+	Type     string `json:"type" jsonschema:"match type: TABLE or COLUMN"`
+}
+
+type SearchSchemaOutput struct {
+	Matches []SchemaMatch `json:"matches" jsonschema:"list of schema matches"`
+}
+
+type SchemaDiffInput struct {
+	SourceDatabase string `json:"source_database" jsonschema:"source database name"`
+	TargetDatabase string `json:"target_database" jsonschema:"target database name"`
+}
+
+type DiffResult struct {
+	Table   string `json:"table" jsonschema:"table name"`
+	Status  string `json:"status" jsonschema:"diff status (MISSING, EXTRA, CHANGED)"`
+	Details string `json:"details,omitempty" jsonschema:"details about the difference"`
+}
+
+type SchemaDiffOutput struct {
+	SourceDatabase string       `json:"source_database" jsonschema:"source database name"`
+	TargetDatabase string       `json:"target_database" jsonschema:"target database name"`
+	Diffs          []DiffResult `json:"diffs" jsonschema:"list of differences between schemas"`
+}

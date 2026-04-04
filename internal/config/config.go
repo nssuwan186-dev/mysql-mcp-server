@@ -80,6 +80,9 @@ type Config struct {
 
 	// Audit logging
 	AuditLogPath string
+
+	// Masking
+	MaskColumns []string
 }
 
 // Load reads configuration from config file (if present) and environment variables.
@@ -191,6 +194,12 @@ func applyEnvOverrides(cfg *Config) {
 	}
 	if v := os.Getenv("MYSQL_MCP_AUDIT_LOG"); v != "" {
 		cfg.AuditLogPath = strings.TrimSpace(v)
+	}
+	if v := os.Getenv("MYSQL_MCP_MASK_COLUMNS"); v != "" {
+		cfg.MaskColumns = strings.Split(v, ",")
+		for i := range cfg.MaskColumns {
+			cfg.MaskColumns[i] = strings.TrimSpace(cfg.MaskColumns[i])
+		}
 	}
 }
 
