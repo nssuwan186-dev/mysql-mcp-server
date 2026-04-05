@@ -4,15 +4,10 @@ package mysql
 import (
 	"context"
 	"database/sql"
-	"database/sql/driver"
-	"errors"
 	"fmt"
-	"net"
 	"time"
 
-	"github.com/cenkalti/backoff/v4"
-	"github.com/go-sql-driver/mysql"
-
+	"github.com/askdba/mysql-mcp-server/internal/dbretry"
 	"github.com/askdba/mysql-mcp-server/internal/util"
 )
 
@@ -20,6 +15,7 @@ type Client struct {
 	db           *sql.DB
 	maxRows      int
 	queryTimeout time.Duration
+	pingTimeout  time.Duration
 	retryCfg     RetryConfig
 }
 
@@ -96,6 +92,7 @@ func New(cfg Config) (*Client, error) {
 		db:           db,
 		maxRows:      mr,
 		queryTimeout: time.Duration(cfg.QueryTimeoutS) * time.Second,
+		pingTimeout:  pingTimeout,
 		retryCfg:     cfg.Retry,
 	}, nil
 }
@@ -114,6 +111,11 @@ func NewWithDB(db *sql.DB, cfg Config) (*Client, error) {
 		cfg.Retry.MaxInterval = 10 * time.Second
 	}
 
+	pingTimeout := cfg.PingTimeout
+	if pingTimeout <= 0 {
+		pingTimeout = 5 * time.Second
+	}
+
 	mr := cfg.MaxRows
 	if mr < 0 {
 		mr = 0
@@ -123,6 +125,7 @@ func NewWithDB(db *sql.DB, cfg Config) (*Client, error) {
 		db:           db,
 		maxRows:      mr,
 		queryTimeout: time.Duration(cfg.QueryTimeoutS) * time.Second,
+		pingTimeout:  pingTimeout,
 		retryCfg:     cfg.Retry,
 	}, nil
 }
@@ -136,58 +139,13 @@ func (c *Client) withTimeout(ctx context.Context) (context.Context, context.Canc
 }
 
 func (c *Client) execWithRetry(ctx context.Context, op func(context.Context) error) error {
-	ebo := backoff.NewExponentialBackOff()
-	ebo.MaxInterval = c.retryCfg.MaxInterval
-	// Disable MaxElapsedTime since we rely on MaxRetries
-	ebo.MaxElapsedTime = 0
-
-	var bo backoff.BackOff = backoff.WithContext(ebo, ctx)
-	b := backoff.WithMaxRetries(bo, uint64(c.retryCfg.MaxRetries))
-
-	return backoff.Retry(func() error {
-		err := op(ctx)
-		if err == nil {
-			return nil
-		}
-
-		if isTransientError(err) {
-			return err // backoff.Retry will call this again
-		}
-
-		return backoff.Permanent(err)
-	}, b)
-}
-
-func isTransientError(err error) bool {
-	if err == nil {
-		return false
+	dc := dbretry.Config{
+		MaxRetries:  c.retryCfg.MaxRetries,
+		MaxInterval: c.retryCfg.MaxInterval,
 	}
-
-	// Check for network errors
-	var netErr net.Error
-	if errors.As(err, &netErr) {
-		return true
-	}
-
-	if errors.Is(err, mysql.ErrInvalidConn) || errors.Is(err, driver.ErrBadConn) {
-		return true
-	}
-
-	// Server-side transient errors are reported as *mysql.MySQLError (ER_*).
-	// Client/connection issues (CR_*) typically surface as net.Error or driver bad-connection errors.
-	var mysqlErr *mysql.MySQLError
-	if errors.As(err, &mysqlErr) {
-		switch mysqlErr.Number {
-		case 1040: // ER_CON_COUNT_ERROR
-			return true
-		case 1213: // ER_LOCK_DEADLOCK
-			return true
-		case 1205: // ER_LOCK_WAIT_TIMEOUT
-			return true
-		}
-	}
-
-	return false
+	return dbretry.Do(ctx, c.db, dc, c.pingTimeout, func() error {
+		return op(ctx)
+	})
 }
 
 func (c *Client) ListDatabases(ctx context.Context) ([]string, error) {

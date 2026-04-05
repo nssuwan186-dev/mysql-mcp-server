@@ -247,6 +247,8 @@ func (fc *FileConfig) ToConfig() *Config {
 		RateLimitRPS:       float64(DefaultRateLimitRPS),
 		RateLimitBurst:     DefaultRateLimitBurst,
 		TokenModel:         "cl100k_base",
+		DBRetryMaxRetries:  3,
+		DBRetryMaxInterval: 10 * time.Second,
 	}
 
 	// Apply file config values (if set)

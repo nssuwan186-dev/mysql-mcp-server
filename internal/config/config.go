@@ -90,6 +90,10 @@ type Config struct {
 	// Audit logging
 	AuditLogPath string
 
+	// Transient DB error retries (MCP tools / shared pool)
+	DBRetryMaxRetries  int
+	DBRetryMaxInterval time.Duration
+
 	// Masking
 	MaskColumns []string
 
@@ -128,6 +132,8 @@ func Load() (*Config, error) {
 			RateLimitRPS:       float64(DefaultRateLimitRPS),
 			RateLimitBurst:     DefaultRateLimitBurst,
 			TokenModel:         "cl100k_base",
+			DBRetryMaxRetries:  3,
+			DBRetryMaxInterval: 10 * time.Second,
 		}
 	}
 
@@ -182,6 +188,18 @@ func applyEnvOverrides(cfg *Config) {
 	}
 	if v := os.Getenv("MYSQL_PING_TIMEOUT_SECONDS"); v != "" {
 		cfg.PingTimeout = time.Duration(getEnvInt("MYSQL_PING_TIMEOUT_SECONDS", int(cfg.PingTimeout.Seconds()))) * time.Second
+	}
+	if v := strings.TrimSpace(os.Getenv("MYSQL_MCP_DB_RETRY_MAX")); v != "" {
+		n, err := strconv.Atoi(v)
+		if err == nil && n >= 0 && n <= 20 {
+			cfg.DBRetryMaxRetries = n
+		}
+	}
+	if v := strings.TrimSpace(os.Getenv("MYSQL_MCP_DB_RETRY_MAX_INTERVAL_MS")); v != "" {
+		n, err := strconv.Atoi(v)
+		if err == nil && n > 0 {
+			cfg.DBRetryMaxInterval = time.Duration(n) * time.Millisecond
+		}
 	}
 	if v := os.Getenv("MYSQL_MCP_EXTENDED"); v != "" {
 		cfg.ExtendedMode = getEnvBool("MYSQL_MCP_EXTENDED")
