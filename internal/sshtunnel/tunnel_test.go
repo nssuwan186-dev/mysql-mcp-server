@@ -44,6 +44,22 @@ func TestBuildHostKeyCallback_Insecure(t *testing.T) {
 	}
 }
 
+func TestNormalizeFingerprintInput_SHA256PreservesBase64Case(t *testing.T) {
+	t.Parallel()
+	n := normalizeFingerprintInput("SHA256:AbCd+EfGh")
+	if n.algo != "sha256" || n.raw != "AbCd+EfGh" {
+		t.Fatalf("got %+v", n)
+	}
+}
+
+func TestNormalizeFingerprintInput_MD5PrefixStripsColons(t *testing.T) {
+	t.Parallel()
+	n := normalizeFingerprintInput("MD5:aa:bb:cc:dd")
+	if n.algo != "md5" || n.raw != "aabbccdd" {
+		t.Fatalf("got %+v", n)
+	}
+}
+
 func TestBuildHostKeyCallback_StrictMissingKnownHosts(t *testing.T) {
 	t.Parallel()
 	p := filepath.Join(t.TempDir(), "no_such_known_hosts")

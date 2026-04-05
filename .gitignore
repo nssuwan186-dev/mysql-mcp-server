@@ -4,6 +4,7 @@ bin/
 *.swp
 .idea/
 .vscode/
+.cursor/
 
 # Personal shell configuration files (should not be committed)
 .bash_profile

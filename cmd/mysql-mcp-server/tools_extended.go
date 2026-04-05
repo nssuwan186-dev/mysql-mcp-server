@@ -809,6 +809,17 @@ func toolSearchSchema(
 	if input.Database != "" {
 		tableQuery += " AND TABLE_SCHEMA = ?"
 		tableArgs = append(tableArgs, input.Database)
+	} else if accessControlEnabled() {
+		allowed := allowedDatabasesLower()
+		if len(allowed) == 0 {
+			return nil, SearchSchemaOutput{}, fmt.Errorf("MYSQL_MCP_ALLOWED_DATABASES is set but empty; cannot run search_schema without a database filter")
+		}
+		ph := strings.Repeat("?,", len(allowed))
+		ph = ph[:len(ph)-1]
+		tableQuery += " AND LOWER(TABLE_SCHEMA) IN (" + ph + ")"
+		for _, db := range allowed {
+			tableArgs = append(tableArgs, db)
+		}
 	} else {
 		tableQuery += " AND TABLE_SCHEMA NOT IN ('information_schema', 'performance_schema', 'mysql', 'sys')"
 	}
@@ -843,6 +854,17 @@ func toolSearchSchema(
 	if input.Database != "" {
 		colQuery += " AND TABLE_SCHEMA = ?"
 		colArgs = append(colArgs, input.Database)
+	} else if accessControlEnabled() {
+		allowed := allowedDatabasesLower()
+		if len(allowed) == 0 {
+			return nil, SearchSchemaOutput{}, fmt.Errorf("MYSQL_MCP_ALLOWED_DATABASES is set but empty; cannot run search_schema without a database filter")
+		}
+		ph := strings.Repeat("?,", len(allowed))
+		ph = ph[:len(ph)-1]
+		colQuery += " AND LOWER(TABLE_SCHEMA) IN (" + ph + ")"
+		for _, db := range allowed {
+			colArgs = append(colArgs, db)
+		}
 	} else {
 		colQuery += " AND TABLE_SCHEMA NOT IN ('information_schema', 'performance_schema', 'mysql', 'sys')"
 	}
@@ -898,39 +920,37 @@ func toolSchemaDiff(
 
 	// Get tables from source
 	sourceTables := make(map[string]bool)
-	rows, err := getDB().QueryContext(ctx, "SELECT TABLE_NAME FROM information_schema.TABLES WHERE TABLE_SCHEMA = ?", input.SourceDatabase)
+	sourceRows, err := getDB().QueryContext(ctx, "SELECT TABLE_NAME FROM information_schema.TABLES WHERE TABLE_SCHEMA = ?", input.SourceDatabase)
 	if err != nil {
 		return nil, SchemaDiffOutput{}, fmt.Errorf("failed to list source tables: %w", err)
 	}
-	for rows.Next() {
+	defer sourceRows.Close()
+	for sourceRows.Next() {
 		var name string
-		if err := rows.Scan(&name); err == nil {
+		if err := sourceRows.Scan(&name); err == nil {
 			sourceTables[name] = true
 		}
 	}
-	if err := rows.Err(); err != nil {
-		rows.Close()
+	if err := sourceRows.Err(); err != nil {
 		return nil, SchemaDiffOutput{}, fmt.Errorf("source tables iteration failed: %w", err)
 	}
-	rows.Close()
 
 	// Get tables from target
 	targetTables := make(map[string]bool)
-	rows, err = getDB().QueryContext(ctx, "SELECT TABLE_NAME FROM information_schema.TABLES WHERE TABLE_SCHEMA = ?", input.TargetDatabase)
+	targetRows, err := getDB().QueryContext(ctx, "SELECT TABLE_NAME FROM information_schema.TABLES WHERE TABLE_SCHEMA = ?", input.TargetDatabase)
 	if err != nil {
 		return nil, SchemaDiffOutput{}, fmt.Errorf("failed to list target tables: %w", err)
 	}
-	for rows.Next() {
+	defer targetRows.Close()
+	for targetRows.Next() {
 		var name string
-		if err := rows.Scan(&name); err == nil {
+		if err := targetRows.Scan(&name); err == nil {
 			targetTables[name] = true
 		}
 	}
-	if err := rows.Err(); err != nil {
-		rows.Close()
+	if err := targetRows.Err(); err != nil {
 		return nil, SchemaDiffOutput{}, fmt.Errorf("target tables iteration failed: %w", err)
 	}
-	rows.Close()
 
 	// Compare tables
 	for name := range sourceTables {

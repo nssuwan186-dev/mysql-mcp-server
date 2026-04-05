@@ -107,19 +107,26 @@ type fingerprintNorm struct {
 }
 
 func normalizeFingerprintInput(s string) fingerprintNorm {
-	s = strings.TrimSpace(strings.ToLower(s))
+	s = strings.TrimSpace(s)
 	s = strings.ReplaceAll(s, " ", "")
-	if strings.HasPrefix(s, "sha256:") {
-		return fingerprintNorm{algo: "sha256", raw: strings.TrimPrefix(s, "sha256:")}
+	if s == "" {
+		return fingerprintNorm{algo: "sha256", raw: ""}
 	}
-	if strings.HasPrefix(s, "md5:") {
-		return fingerprintNorm{algo: "md5", raw: strings.TrimPrefix(s, "md5:")}
+	// Split algorithm prefix (case-insensitive) from payload; do not alter SHA256 base64 case.
+	if i := strings.IndexByte(s, ':'); i >= 0 {
+		prefix := strings.ToLower(s[:i])
+		payload := s[i+1:]
+		switch prefix {
+		case "sha256":
+			return fingerprintNorm{algo: "sha256", raw: payload}
+		case "md5":
+			return fingerprintNorm{algo: "md5", raw: strings.ReplaceAll(strings.ToLower(payload), ":", "")}
+		}
 	}
-	// Bare MD5 hex with colons
+	// Bare MD5 hex with colons (OpenSSH style), not a URL path.
 	if strings.Contains(s, ":") && !strings.Contains(s, "/") {
-		return fingerprintNorm{algo: "md5", raw: strings.ReplaceAll(s, ":", "")}
+		return fingerprintNorm{algo: "md5", raw: strings.ReplaceAll(strings.ToLower(s), ":", "")}
 	}
-	// Assume SHA256 base64 without prefix
 	return fingerprintNorm{algo: "sha256", raw: s}
 }
 

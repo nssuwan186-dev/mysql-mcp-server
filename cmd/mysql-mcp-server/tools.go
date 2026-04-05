@@ -770,16 +770,21 @@ func toolUseConnection(
 }
 
 func maskResults(cols []string, rows [][]interface{}, patterns []string) {
-	if len(patterns) == 0 {
+	var nonEmpty []string
+	for _, p := range patterns {
+		if t := strings.TrimSpace(p); t != "" {
+			nonEmpty = append(nonEmpty, t)
+		}
+	}
+	if len(nonEmpty) == 0 {
 		return
 	}
 
 	maskIndices := make(map[int]bool)
 	for i, col := range cols {
 		lowerCol := strings.ToLower(col)
-		for _, p := range patterns {
-			p = strings.TrimSpace(p)
-			if p != "" && strings.Contains(lowerCol, strings.ToLower(p)) {
+		for _, p := range nonEmpty {
+			if strings.Contains(lowerCol, strings.ToLower(p)) {
 				maskIndices[i] = true
 				break
 			}

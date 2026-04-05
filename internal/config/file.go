@@ -257,7 +257,15 @@ func (fc *FileConfig) ToConfig() *Config {
 		cfg.QueryTimeout = secondsToDuration(fc.Query.TimeoutSeconds)
 	}
 	if len(fc.Query.MaskColumns) > 0 {
-		cfg.MaskColumns = fc.Query.MaskColumns
+		var mask []string
+		for _, c := range fc.Query.MaskColumns {
+			if t := strings.TrimSpace(c); t != "" {
+				mask = append(mask, t)
+			}
+		}
+		if len(mask) > 0 {
+			cfg.MaskColumns = mask
+		}
 	}
 
 	if fc.Pool.MaxOpenConns > 0 {
