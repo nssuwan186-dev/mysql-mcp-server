@@ -51,14 +51,17 @@ type DescribeTableOutput struct {
 type RunQueryInput struct {
 	SQL      string `json:"sql" jsonschema:"SQL query to execute; must start with SELECT, SHOW, DESCRIBE, or EXPLAIN. Apply MySQL optimization guidelines before execution."`
 	MaxRows  *int   `json:"max_rows,omitempty" jsonschema:"optional row limit overriding the default max rows"`
+	Offset   *int   `json:"offset,omitempty" jsonschema:"optional zero-based row offset for SELECT/UNION pagination; do not add LIMIT to the SQL when using this"`
 	Database string `json:"database,omitempty" jsonschema:"optional database name to USE before running the query"`
 }
 
 type QueryResult struct {
-	Columns   []string        `json:"columns" jsonschema:"column names"`
-	Rows      [][]interface{} `json:"rows" jsonschema:"rows of values"`
-	Truncated bool            `json:"truncated,omitempty" jsonschema:"true if more rows existed beyond the row limit (not set when the result size exactly equals the limit)"`
-	Warning   string          `json:"warning,omitempty" jsonschema:"performance or usage warning, if any"`
+	Columns    []string        `json:"columns" jsonschema:"column names"`
+	Rows       [][]interface{} `json:"rows" jsonschema:"rows of values"`
+	Truncated  bool            `json:"truncated,omitempty" jsonschema:"true if more rows existed beyond the row limit (not set when the result size exactly equals the limit)"`
+	HasMore    bool            `json:"has_more,omitempty" jsonschema:"true when offset pagination indicates another page may exist"`
+	NextOffset *int            `json:"next_offset,omitempty" jsonschema:"pass as offset to retrieve the next page when has_more is true"`
+	Warning    string          `json:"warning,omitempty" jsonschema:"performance or usage warning, if any"`
 }
 
 type PingInput struct{}

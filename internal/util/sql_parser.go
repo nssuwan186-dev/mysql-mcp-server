@@ -668,6 +668,42 @@ func InjectLimit(sqlText string, limit int) string {
 	return fmt.Sprintf("%s LIMIT %d", base, limit)
 }
 
+// InjectLimitWithOffset appends LIMIT fetchLimit OFFSET offset when the top-level
+// statement is SELECT or UNION and has no LIMIT. Used for keyset-free pagination:
+// callers fetch fetchLimit rows (often limit+1) to detect a next page.
+// Non-SELECT statements and unparsable SQL return an error.
+func InjectLimitWithOffset(sqlText string, fetchLimit, offset int) (string, error) {
+	if fetchLimit <= 0 {
+		return sqlText, nil
+	}
+	if offset < 0 {
+		return "", fmt.Errorf("offset must be non-negative")
+	}
+
+	trimmed := strings.TrimSpace(sqlText)
+	stmt, err := sqlparser.Parse(trimmed)
+	if err != nil {
+		return "", fmt.Errorf("cannot paginate unparsable SQL: %w", err)
+	}
+
+	var hasLimit bool
+	switch s := stmt.(type) {
+	case *sqlparser.Select:
+		hasLimit = s.Limit != nil
+	case *sqlparser.Union:
+		hasLimit = s.Limit != nil
+	default:
+		return "", fmt.Errorf("pagination requires a SELECT or UNION query")
+	}
+
+	if hasLimit {
+		return "", fmt.Errorf("query already contains LIMIT; remove it to use offset pagination")
+	}
+
+	base := strings.TrimRight(strings.TrimSpace(trimmed), ";")
+	return fmt.Sprintf("%s LIMIT %d OFFSET %d", base, fetchLimit, offset), nil
+}
+
 // HasSelectStar reports whether the SQL statement selects all columns with a
 // bare "*" wildcard (e.g. SELECT * or SELECT t.*).  Non-SELECT statements and
 // statements that cannot be parsed always return false.

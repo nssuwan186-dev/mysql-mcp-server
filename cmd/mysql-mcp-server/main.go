@@ -12,6 +12,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/askdba/mysql-mcp-server/internal/config"
+	"github.com/askdba/mysql-mcp-server/internal/dbretry"
 	"github.com/askdba/mysql-mcp-server/internal/util"
 )
 
@@ -34,6 +35,7 @@ var (
 	maxRows        int
 	queryTimeout   time.Duration
 	pingTimeout    time.Duration
+	dbRetryCfg     dbretry.Config
 	extendedMode   bool
 	jsonLogging    bool
 	tokenTracking  bool
@@ -170,6 +172,13 @@ func main() {
 	maxRows = cfg.MaxRows
 	queryTimeout = cfg.QueryTimeout
 	pingTimeout = cfg.PingTimeout
+	dbRetryCfg = dbretry.Config{
+		MaxRetries:  cfg.DBRetryMaxRetries,
+		MaxInterval: cfg.DBRetryMaxInterval,
+	}
+	if dbRetryCfg.MaxInterval <= 0 {
+		dbRetryCfg.MaxInterval = 10 * time.Second
+	}
 	extendedMode = cfg.ExtendedMode
 	jsonLogging = cfg.JSONLogging
 	tokenTracking = cfg.TokenTracking
@@ -309,8 +318,11 @@ func registerCoreTools(server *mcp.Server) {
 			"IMPORTANT: Always specify only the columns you need instead of SELECT * to reduce " +
 			"payload size and improve performance. Results are automatically capped at the " +
 			"configured row limit (default: 200 rows); include a LIMIT clause in your query " +
-			"to request fewer rows. Apply MySQL optimization guidelines (e.g., filter early, " +
-			"use indexed columns, avoid functions on indexed columns, use EXPLAIN) before executing.",
+			"to request fewer rows. For large SELECT result sets, use the offset field with " +
+			"max_rows as page size (omit LIMIT from SQL; the server injects LIMIT/OFFSET). " +
+			"The response includes has_more and next_offset when another page may exist. " +
+			"Apply MySQL optimization guidelines (e.g., filter early, use indexed columns, " +
+			"avoid functions on indexed columns, use EXPLAIN) before executing.",
 	}, toolRunQueryWrapped)
 
 	mcp.AddTool(server, &mcp.Tool{

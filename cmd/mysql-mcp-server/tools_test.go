@@ -10,6 +10,7 @@ import (
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/askdba/mysql-mcp-server/internal/config"
+	"github.com/askdba/mysql-mcp-server/internal/dbretry"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -40,6 +41,7 @@ func setupMockDBFull(t *testing.T) mockDBResult {
 	oldMaxRows := maxRows
 	oldQueryTimeout := queryTimeout
 	oldPingTimeout := pingTimeout
+	oldDBRetryCfg := dbRetryCfg
 
 	// Set up mock connection manager with mock DB
 	cm := NewConnectionManager()
@@ -51,12 +53,14 @@ func setupMockDBFull(t *testing.T) mockDBResult {
 	maxRows = 1000
 	queryTimeout = 30 * time.Second
 	pingTimeout = time.Duration(config.DefaultPingTimeoutSecs) * time.Second
+	dbRetryCfg = dbretry.DefaultConfig()
 
 	cleanup := func() {
 		connManager = oldConnManager
 		maxRows = oldMaxRows
 		queryTimeout = oldQueryTimeout
 		pingTimeout = oldPingTimeout
+		dbRetryCfg = oldDBRetryCfg
 		mockDB.Close()
 	}
 
@@ -1086,5 +1090,142 @@ func TestToolRunQueryLimitNotInjectedWhenPresent(t *testing.T) {
 
 	if len(output.Rows) != 2 {
 		t.Errorf("expected 2 rows, got %d", len(output.Rows))
+	}
+}
+
+func TestToolRunQueryOffsetPaginationHasMore(t *testing.T) {
+	mock, cleanup := setupMockDB(t)
+	defer cleanup()
+
+	offset := 0
+	maxRowsArg := 3
+	rows := sqlmock.NewRows([]string{"id"}).
+		AddRow(1).
+		AddRow(2).
+		AddRow(3).
+		AddRow(4)
+
+	mock.ExpectQuery("SELECT id FROM t ORDER BY id LIMIT 4 OFFSET 0").WillReturnRows(rows)
+
+	ctx := context.Background()
+	_, output, err := toolRunQuery(ctx, &mcp.CallToolRequest{}, RunQueryInput{
+		SQL:     "SELECT id FROM t ORDER BY id",
+		MaxRows: &maxRowsArg,
+		Offset:  &offset,
+	})
+
+	if err != nil {
+		t.Fatalf("toolRunQuery failed: %v", err)
+	}
+	if len(output.Rows) != 3 {
+		t.Fatalf("expected 3 rows, got %d", len(output.Rows))
+	}
+	if !output.HasMore {
+		t.Error("expected HasMore when a fourth row exists")
+	}
+	if output.NextOffset == nil || *output.NextOffset != 3 {
+		t.Errorf("expected NextOffset 3, got %v", output.NextOffset)
+	}
+	if output.Truncated {
+		t.Error("pagination should use HasMore, not Truncated")
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Errorf("unfulfilled expectations: %v", err)
+	}
+}
+
+func TestToolRunQueryOffsetPaginationNextPage(t *testing.T) {
+	mock, cleanup := setupMockDB(t)
+	defer cleanup()
+
+	offset := 3
+	maxRowsArg := 3
+	rows := sqlmock.NewRows([]string{"id"}).
+		AddRow(4).
+		AddRow(5).
+		AddRow(6)
+
+	mock.ExpectQuery("SELECT id FROM t ORDER BY id LIMIT 4 OFFSET 3").WillReturnRows(rows)
+
+	ctx := context.Background()
+	_, output, err := toolRunQuery(ctx, &mcp.CallToolRequest{}, RunQueryInput{
+		SQL:     "SELECT id FROM t ORDER BY id",
+		MaxRows: &maxRowsArg,
+		Offset:  &offset,
+	})
+
+	if err != nil {
+		t.Fatalf("toolRunQuery failed: %v", err)
+	}
+	if len(output.Rows) != 3 {
+		t.Fatalf("expected 3 rows, got %d", len(output.Rows))
+	}
+	if output.HasMore {
+		t.Error("expected HasMore=false on last page")
+	}
+	if output.NextOffset != nil {
+		t.Errorf("expected nil NextOffset, got %v", output.NextOffset)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Errorf("unfulfilled expectations: %v", err)
+	}
+}
+
+func TestToolRunQueryOffsetNegative(t *testing.T) {
+	mock, cleanup := setupMockDB(t)
+	defer cleanup()
+
+	bad := -1
+	ctx := context.Background()
+	_, _, err := toolRunQuery(ctx, &mcp.CallToolRequest{}, RunQueryInput{
+		SQL:    "SELECT 1",
+		Offset: &bad,
+	})
+	if err == nil {
+		t.Fatal("expected error for negative offset")
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Errorf("unfulfilled expectations: %v", err)
+	}
+}
+
+// Regression: MYSQL_MAX_ROWS=0 with offset must not return next_offset equal to offset (Codex P2).
+func TestToolRunQueryOffsetPaginationRequiresPositiveLimit(t *testing.T) {
+	mock, cleanup := setupMockDB(t)
+	defer cleanup()
+
+	oldMaxRows := maxRows
+	maxRows = 0
+	defer func() { maxRows = oldMaxRows }()
+
+	off := 0
+	ctx := context.Background()
+	_, _, err := toolRunQuery(ctx, &mcp.CallToolRequest{}, RunQueryInput{
+		SQL:    "SELECT id FROM t ORDER BY id",
+		Offset: &off,
+	})
+	if err == nil {
+		t.Fatal("expected error when offset pagination is used with non-positive row limit")
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Errorf("unfulfilled expectations: %v", err)
+	}
+}
+
+func TestToolRunQueryPaginationRequiresSelect(t *testing.T) {
+	mock, cleanup := setupMockDB(t)
+	defer cleanup()
+
+	off := 0
+	ctx := context.Background()
+	_, _, err := toolRunQuery(ctx, &mcp.CallToolRequest{}, RunQueryInput{
+		SQL:    "SHOW TABLES",
+		Offset: &off,
+	})
+	if err == nil {
+		t.Fatal("expected error when offset is used with non-SELECT")
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Errorf("unfulfilled expectations: %v", err)
 	}
 }

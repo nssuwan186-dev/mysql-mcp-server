@@ -123,7 +123,15 @@ test-integration-mariadb-11:
 # SSH tunnel integration test (issue #79): requires mysql80 + ssh_bastion
 test-integration-ssh:
 	@echo "$(BLUE)🔐 Running SSH tunnel integration test...$(RESET)"
+	@mkdir -p tests/integration/fixtures
+	@echo "$(CYAN)🔑 Generating ephemeral SSH client key...$(RESET)"
+	@rm -f tests/integration/fixtures/ssh_test_key tests/integration/fixtures/ssh_test_key.pub
+	@ssh-keygen -t ed25519 -f tests/integration/fixtures/ssh_test_key -N "" -q
 	@docker compose -f docker-compose.test.yml up -d --wait --wait-timeout 90 mysql80 ssh_bastion
+	@echo "$(CYAN)🔑 Authorizing client key and fetching bastion host key...$(RESET)"
+	@docker exec -i mysql-mcp-test-ssh-bastion sh -c 'cat >> /root/.ssh/authorized_keys' < tests/integration/fixtures/ssh_test_key.pub
+	@sleep 2
+	@ssh-keyscan -p 2222 localhost > tests/integration/fixtures/ssh_bastion_known_hosts 2>/dev/null
 	@MYSQL_SSH_HOST=localhost MYSQL_SSH_PORT=2222 MYSQL_SSH_USER=root \
 		MYSQL_SSH_KEY_PATH="$$(pwd)/tests/integration/fixtures/ssh_test_key" \
 		MYSQL_SSH_KNOWN_HOSTS="$$(pwd)/tests/integration/fixtures/ssh_bastion_known_hosts" \
@@ -131,6 +139,7 @@ test-integration-ssh:
 		go test -tags=integration -v -run TestSSHTunnel ./tests/integration/...; \
 		TEST_EXIT=$$?; \
 		docker compose -f docker-compose.test.yml stop ssh_bastion mysql80; \
+		rm -f tests/integration/fixtures/ssh_bastion_known_hosts tests/integration/fixtures/ssh_test_key tests/integration/fixtures/ssh_test_key.pub; \
 		exit $$TEST_EXIT
 
 # Sakila database integration tests
