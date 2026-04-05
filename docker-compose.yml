@@ -9,7 +9,6 @@
 services:
   mysql:
     image: mysql:8.0
-    platform: linux/arm64
     container_name: mysql-mcp-sandbox-db
     environment:
       MYSQL_ROOT_PASSWORD: testpass
@@ -36,7 +35,6 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    platform: linux/arm64
     container_name: mysql-mcp-sandbox-server
     depends_on:
       mysql:

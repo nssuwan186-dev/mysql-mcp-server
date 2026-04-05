@@ -694,6 +694,9 @@ func toolSearchSchema(
 		m.Type = "TABLE"
 		out.Matches = append(out.Matches, m)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, SearchSchemaOutput{}, err
+	}
 
 	// 2. Search for matching columns
 	colQuery := `SELECT TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME 
@@ -725,6 +728,9 @@ func toolSearchSchema(
 			}
 			m.Type = "COLUMN"
 			out.Matches = append(out.Matches, m)
+		}
+		if err := crows.Err(); err != nil {
+			return nil, SearchSchemaOutput{}, err
 		}
 	}
 
@@ -761,6 +767,10 @@ func toolSchemaDiff(
 			sourceTables[name] = true
 		}
 	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, SchemaDiffOutput{}, fmt.Errorf("source tables iteration failed: %w", err)
+	}
 	rows.Close()
 
 	// Get tables from target
@@ -774,6 +784,10 @@ func toolSchemaDiff(
 		if err := rows.Scan(&name); err == nil {
 			targetTables[name] = true
 		}
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, SchemaDiffOutput{}, fmt.Errorf("target tables iteration failed: %w", err)
 	}
 	rows.Close()
 
@@ -833,7 +847,7 @@ func compareTableSchema(ctx context.Context, sourceDB, targetDB, table string) (
 				cols[name.String] = fmt.Sprintf("%s, Null:%s, Def:%s", ctype.String, nullable.String, def.String)
 			}
 		}
-		return cols, nil
+		return cols, rows.Err()
 	}
 
 	sCols, err := getSourceCols(sourceDB)

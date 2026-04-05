@@ -196,9 +196,12 @@ func applyEnvOverrides(cfg *Config) {
 		cfg.AuditLogPath = strings.TrimSpace(v)
 	}
 	if v := os.Getenv("MYSQL_MCP_MASK_COLUMNS"); v != "" {
-		cfg.MaskColumns = strings.Split(v, ",")
-		for i := range cfg.MaskColumns {
-			cfg.MaskColumns[i] = strings.TrimSpace(cfg.MaskColumns[i])
+		parts := strings.Split(v, ",")
+		for _, p := range parts {
+			trimmed := strings.TrimSpace(p)
+			if trimmed != "" {
+				cfg.MaskColumns = append(cfg.MaskColumns, trimmed)
+			}
 		}
 	}
 }

@@ -23,8 +23,8 @@ type Client struct {
 }
 
 type RetryConfig struct {
-	MaxRetries int
-	MaxBackoff time.Duration
+	MaxRetries  int
+	MaxInterval time.Duration
 }
 
 type Config struct {
@@ -82,8 +82,8 @@ func New(cfg Config) (*Client, error) {
 	if cfg.Retry.MaxRetries <= 0 {
 		cfg.Retry.MaxRetries = 3
 	}
-	if cfg.Retry.MaxBackoff <= 0 {
-		cfg.Retry.MaxBackoff = 10 * time.Second
+	if cfg.Retry.MaxInterval <= 0 {
+		cfg.Retry.MaxInterval = 10 * time.Second
 	}
 
 	return &Client{
@@ -104,8 +104,8 @@ func NewWithDB(db *sql.DB, cfg Config) (*Client, error) {
 	if cfg.Retry.MaxRetries <= 0 {
 		cfg.Retry.MaxRetries = 3
 	}
-	if cfg.Retry.MaxBackoff <= 0 {
-		cfg.Retry.MaxBackoff = 10 * time.Second
+	if cfg.Retry.MaxInterval <= 0 {
+		cfg.Retry.MaxInterval = 10 * time.Second
 	}
 
 	return &Client{
@@ -126,8 +126,10 @@ func (c *Client) withTimeout(ctx context.Context) (context.Context, context.Canc
 
 func (c *Client) execWithRetry(ctx context.Context, op func(context.Context) error) error {
 	bo := backoff.NewExponentialBackOff()
-	bo.MaxElapsedTime = c.retryCfg.MaxBackoff
-	// We'll also cap the number of retries if MaxRetries > 0
+	bo.MaxInterval = c.retryCfg.MaxInterval
+	// Disable MaxElapsedTime since we rely on MaxRetries
+	bo.MaxElapsedTime = 0
+	
 	b := backoff.WithMaxRetries(bo, uint64(c.retryCfg.MaxRetries))
 
 	return backoff.Retry(func() error {

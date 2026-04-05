@@ -170,8 +170,8 @@ func TestRunQueryWithRetry(t *testing.T) {
 		MaxRows:       5,
 		QueryTimeoutS: 5,
 		Retry: RetryConfig{
-			MaxRetries: 2,
-			MaxBackoff: 2 * time.Second,
+			MaxRetries:  2,
+			MaxInterval: 2 * time.Second,
 		},
 	}
 
@@ -217,8 +217,8 @@ func TestRunQueryPermanentError(t *testing.T) {
 		MaxRows:       5,
 		QueryTimeoutS: 5,
 		Retry: RetryConfig{
-			MaxRetries: 2,
-			MaxBackoff: 2 * time.Second,
+			MaxRetries:  2,
+			MaxInterval: 2 * time.Second,
 		},
 	}
 

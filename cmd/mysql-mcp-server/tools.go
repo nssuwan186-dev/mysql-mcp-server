@@ -553,7 +553,8 @@ func maskResults(cols []string, rows [][]interface{}, patterns []string) {
 	for i, col := range cols {
 		lowerCol := strings.ToLower(col)
 		for _, p := range patterns {
-			if strings.Contains(lowerCol, strings.ToLower(p)) {
+			p = strings.TrimSpace(p)
+			if p != "" && strings.Contains(lowerCol, strings.ToLower(p)) {
 				maskIndices[i] = true
 				break
 			}
