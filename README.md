@@ -182,14 +182,19 @@ connections:
 
 ### SSH Tunneling (Bastion Host)
 
+> **Security — host keys (read this):** By default the server **verifies the SSH bastion’s host key** (same idea as OpenSSH). Without that, a network attacker could present a fake bastion and intercept database traffic. Use a **`known_hosts`** file (default: **`~/.ssh/known_hosts`**) or pin the key with **`MYSQL_SSH_HOST_KEY_FINGERPRINT`**. Paths support **`~`**. Turning verification off is **opt-in only** and **dangerous**: set **`MYSQL_SSH_STRICT_HOST_KEY_CHECKING=false`** or YAML **`strict_host_key_checking: false`** (JSON: **`ssh_strict_host_key_checking: false`**) only if you accept that risk.
+
 Connect to MySQL through an SSH bastion when the database is not directly reachable:
 
 | Variable | Description |
 |----------|-------------|
 | `MYSQL_SSH_HOST` | Bastion hostname |
 | `MYSQL_SSH_USER` | SSH username |
-| `MYSQL_SSH_KEY_PATH` | Path to private key file |
+| `MYSQL_SSH_KEY_PATH` | Path to private key file (`~` expanded) |
 | `MYSQL_SSH_PORT` | SSH port (default 22) |
+| `MYSQL_SSH_KNOWN_HOSTS` | Path to OpenSSH `known_hosts` file (optional; default `~/.ssh/known_hosts` when verifying) |
+| `MYSQL_SSH_HOST_KEY_FINGERPRINT` | Pin server key, e.g. `SHA256:...` or legacy `MD5:...` / `aa:bb:...` (optional; overrides file lookup for the callback) |
+| `MYSQL_SSH_STRICT_HOST_KEY_CHECKING` | Default strict. Set to `false` / `0` / `no` / `off` to **disable** host key verification (**insecure**) |
 
 **Environment variables:**
 
@@ -197,6 +202,9 @@ Connect to MySQL through an SSH bastion when the database is not directly reacha
 export MYSQL_SSH_HOST="bastion.example.com"
 export MYSQL_SSH_USER="deploy"
 export MYSQL_SSH_KEY_PATH="$HOME/.ssh/id_rsa"
+export MYSQL_SSH_KNOWN_HOSTS="$HOME/.ssh/known_hosts"
+# Optional: instead of a file, pin the bastion key (from ssh-keygen -lf):
+# export MYSQL_SSH_HOST_KEY_FINGERPRINT="SHA256:...."
 export MYSQL_DSN="user:pass@tcp(mysql.internal:3306)/mydb?parseTime=true"
 ```
 
@@ -211,6 +219,9 @@ connections:
       user: "deploy"
       key_path: "~/.ssh/id_rsa"
       port: 22  # optional, default 22
+      strict_host_key_checking: true   # default when omitted; false = insecure, opt-in only
+      known_hosts: "~/.ssh/known_hosts"  # optional
+      host_key_fingerprint: "SHA256:...."  # optional alternative to known_hosts
 ```
 
 ### Multi-DSN Configuration

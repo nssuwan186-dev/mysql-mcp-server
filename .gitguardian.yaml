@@ -2,3 +2,4 @@ version: 2
 secret:
   ignored-paths:
     - 'tests/integration/fixtures/ssh_test_key'
+    - 'tests/integration/ssh_bastion/ssh_host_ed25519_key'

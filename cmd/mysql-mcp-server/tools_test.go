@@ -185,11 +185,6 @@ func TestToolListTablesEmptySchemaReturnsEmpty(t *testing.T) {
 	mock.ExpectQuery("SELECT 1 FROM information_schema.SCHEMATA WHERE SCHEMA_NAME = \\? LIMIT 1").
 		WithArgs("emptydb").
 		WillReturnRows(schemaRows)
-	// Allow duplicate schema checks if triggered by mock behavior.
-	schemaRowsSecond := sqlmock.NewRows([]string{"1"}).AddRow(1)
-	mock.ExpectQuery("SELECT 1 FROM information_schema.SCHEMATA WHERE SCHEMA_NAME = \\? LIMIT 1").
-		WithArgs("emptydb").
-		WillReturnRows(schemaRowsSecond)
 
 	ctx := context.Background()
 	_, output, err := toolListTables(ctx, &mcp.CallToolRequest{}, ListTablesInput{Database: "emptydb"})

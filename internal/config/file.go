@@ -49,10 +49,13 @@ type FileConnectionConfig struct {
 
 // FileSSHConfig represents SSH tunnel settings in the config file.
 type FileSSHConfig struct {
-	Host    string `yaml:"host" json:"host"`
-	User    string `yaml:"user" json:"user"`
-	KeyPath string `yaml:"key_path" json:"key_path"`
-	Port    int    `yaml:"port" json:"port"` // 0 = default 22
+	Host                  string `yaml:"host" json:"host"`
+	User                  string `yaml:"user" json:"user"`
+	KeyPath               string `yaml:"key_path" json:"key_path"`
+	Port                  int    `yaml:"port" json:"port"` // 0 = default 22
+	StrictHostKeyChecking *bool  `yaml:"strict_host_key_checking,omitempty" json:"strict_host_key_checking,omitempty"`
+	KnownHostsPath        string `yaml:"known_hosts,omitempty" json:"known_hosts,omitempty"`
+	HostKeyFingerprint    string `yaml:"host_key_fingerprint,omitempty" json:"host_key_fingerprint,omitempty"`
 }
 
 // FileQueryConfig represents query settings in the config file.
@@ -348,10 +351,13 @@ func (fc *FileConfig) ToConfig() *Config {
 		}
 		if conn.SSH != nil && (conn.SSH.Host != "" || conn.SSH.User != "" || conn.SSH.KeyPath != "") {
 			cc.SSH = &SSHConfig{
-				Host:    conn.SSH.Host,
-				User:    conn.SSH.User,
-				KeyPath: conn.SSH.KeyPath,
-				Port:    conn.SSH.Port,
+				Host:                  conn.SSH.Host,
+				User:                  conn.SSH.User,
+				KeyPath:               conn.SSH.KeyPath,
+				Port:                  conn.SSH.Port,
+				StrictHostKeyChecking: conn.SSH.StrictHostKeyChecking,
+				KnownHostsPath:        conn.SSH.KnownHostsPath,
+				HostKeyFingerprint:    conn.SSH.HostKeyFingerprint,
 			}
 		}
 		cfg.Connections = append(cfg.Connections, cc)
@@ -415,10 +421,13 @@ func PrintConfig(cfg *Config) string {
 		}
 		if conn.SSH != nil {
 			fcc.SSH = &FileSSHConfig{
-				Host:    conn.SSH.Host,
-				User:    conn.SSH.User,
-				KeyPath: conn.SSH.KeyPath,
-				Port:    conn.SSH.Port,
+				Host:                  conn.SSH.Host,
+				User:                  conn.SSH.User,
+				KeyPath:               conn.SSH.KeyPath,
+				Port:                  conn.SSH.Port,
+				StrictHostKeyChecking: conn.SSH.StrictHostKeyChecking,
+				KnownHostsPath:        conn.SSH.KnownHostsPath,
+				HostKeyFingerprint:    conn.SSH.HostKeyFingerprint,
 			}
 		}
 		fc.Connections[conn.Name] = fcc

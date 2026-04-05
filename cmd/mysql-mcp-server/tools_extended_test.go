@@ -1264,6 +1264,161 @@ func TestToolExplainQueryWarningsPopulated(t *testing.T) {
 	}
 }
 
+// ===== toolSearchSchema Tests =====
+
+func TestToolSearchSchemaSuccess(t *testing.T) {
+	mock, cleanup := setupExtendedMockDB(t)
+	defer cleanup()
+
+	// Mock table search
+	tableRows := sqlmock.NewRows([]string{"TABLE_SCHEMA", "TABLE_NAME"}).
+		AddRow("testdb", "users").
+		AddRow("testdb", "user_profiles")
+
+	mock.ExpectQuery("SELECT TABLE_SCHEMA, TABLE_NAME FROM information_schema.TABLES WHERE TABLE_NAME LIKE").
+		WithArgs("%user%", 1000).
+		WillReturnRows(tableRows)
+
+	// Mock column search (maxRows - 2 = 998)
+	colRows := sqlmock.NewRows([]string{"TABLE_SCHEMA", "TABLE_NAME", "COLUMN_NAME"}).
+		AddRow("testdb", "orders", "user_id")
+
+	mock.ExpectQuery("SELECT TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME FROM information_schema.COLUMNS WHERE COLUMN_NAME LIKE").
+		WithArgs("%user%", 998).
+		WillReturnRows(colRows)
+
+	ctx := context.Background()
+	_, output, err := toolSearchSchema(ctx, &mcp.CallToolRequest{}, SearchSchemaInput{
+		Pattern: "%user%",
+	})
+
+	if err != nil {
+		t.Fatalf("toolSearchSchema failed: %v", err)
+	}
+
+	if len(output.Matches) != 3 {
+		t.Errorf("expected 3 matches, got %d", len(output.Matches))
+	}
+
+	if output.Matches[0].Type != "TABLE" || output.Matches[0].Table != "users" {
+		t.Errorf("unexpected first match: %+v", output.Matches[0])
+	}
+
+	if output.Matches[2].Type != "COLUMN" || output.Matches[2].Column != "user_id" {
+		t.Errorf("unexpected third match: %+v", output.Matches[2])
+	}
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Errorf("unfulfilled expectations: %v", err)
+	}
+}
+
+func TestToolSearchSchemaEmptyPattern(t *testing.T) {
+	mock, cleanup := setupExtendedMockDB(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	_, _, err := toolSearchSchema(ctx, &mcp.CallToolRequest{}, SearchSchemaInput{
+		Pattern: "",
+	})
+
+	if err == nil {
+		t.Fatal("expected error for empty pattern")
+	}
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Errorf("unfulfilled expectations: %v", err)
+	}
+}
+
+// ===== toolSchemaDiff Tests =====
+
+func TestToolSchemaDiffSuccess(t *testing.T) {
+	mock, cleanup := setupExtendedMockDB(t)
+	defer cleanup()
+
+	// Source tables: users, orders
+	sourceRows := sqlmock.NewRows([]string{"TABLE_NAME"}).
+		AddRow("users").
+		AddRow("orders")
+	mock.ExpectQuery("SELECT TABLE_NAME FROM information_schema.TABLES WHERE TABLE_SCHEMA = \\?").
+		WithArgs("db1").
+		WillReturnRows(sourceRows)
+
+	// Target tables: users, products
+	targetRows := sqlmock.NewRows([]string{"TABLE_NAME"}).
+		AddRow("users").
+		AddRow("products")
+	mock.ExpectQuery("SELECT TABLE_NAME FROM information_schema.TABLES WHERE TABLE_SCHEMA = \\?").
+		WithArgs("db2").
+		WillReturnRows(targetRows)
+
+	// Mock column comparison for "users" table
+	userColsSource := sqlmock.NewRows([]string{"COLUMN_NAME", "COLUMN_TYPE", "IS_NULLABLE", "COLUMN_DEFAULT"}).
+		AddRow("id", "int", "NO", nil)
+	mock.ExpectQuery("SELECT COLUMN_NAME, COLUMN_TYPE, IS_NULLABLE, COLUMN_DEFAULT FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = \\? AND TABLE_NAME = \\?").
+		WithArgs("db1", "users").
+		WillReturnRows(userColsSource)
+
+	userColsTarget := sqlmock.NewRows([]string{"COLUMN_NAME", "COLUMN_TYPE", "IS_NULLABLE", "COLUMN_DEFAULT"}).
+		AddRow("id", "int", "NO", nil)
+	mock.ExpectQuery("SELECT COLUMN_NAME, COLUMN_TYPE, IS_NULLABLE, COLUMN_DEFAULT FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = \\? AND TABLE_NAME = \\?").
+		WithArgs("db2", "users").
+		WillReturnRows(userColsTarget)
+
+	ctx := context.Background()
+	_, output, err := toolSchemaDiff(ctx, &mcp.CallToolRequest{}, SchemaDiffInput{
+		SourceDatabase: "db1",
+		TargetDatabase: "db2",
+	})
+
+	if err != nil {
+		t.Fatalf("toolSchemaDiff failed: %v", err)
+	}
+
+	foundMissing := false
+	foundExtra := false
+	for _, diff := range output.Diffs {
+		if diff.Table == "orders" && diff.Status == "MISSING" {
+			foundMissing = true
+		}
+		if diff.Table == "products" && diff.Status == "EXTRA" {
+			foundExtra = true
+		}
+	}
+
+	if !foundMissing {
+		t.Errorf("expected MISSING status for table 'orders' in Diffs, got: %+v", output.Diffs)
+	}
+
+	if !foundExtra {
+		t.Errorf("expected EXTRA status for table 'products' in Diffs, got: %+v", output.Diffs)
+	}
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Errorf("unfulfilled expectations: %v", err)
+	}
+}
+
+func TestToolSchemaDiffMissingInputs(t *testing.T) {
+	mock, cleanup := setupExtendedMockDB(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	_, _, err := toolSchemaDiff(ctx, &mcp.CallToolRequest{}, SchemaDiffInput{
+		SourceDatabase: "",
+		TargetDatabase: "db2",
+	})
+
+	if err == nil {
+		t.Fatal("expected error for missing source database")
+	}
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Errorf("unfulfilled expectations: %v", err)
+	}
+}
+
 // containsCI is a case-insensitive substring check helper for test assertions.
 func containsCI(s, substr string) bool {
 	return strings.Contains(strings.ToLower(s), strings.ToLower(substr))

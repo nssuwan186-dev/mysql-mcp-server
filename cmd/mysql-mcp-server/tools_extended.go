@@ -788,6 +788,11 @@ func toolSearchSchema(
 	if input.Pattern == "" {
 		return nil, SearchSchemaOutput{}, fmt.Errorf("pattern is required")
 	}
+	if input.Database != "" {
+		if err := requireAllowedDatabase(input.Database); err != nil {
+			return nil, SearchSchemaOutput{}, err
+		}
+	}
 
 	ctx, cancel := context.WithTimeout(ctx, queryTimeout)
 	defer cancel()
@@ -874,6 +879,12 @@ func toolSchemaDiff(
 ) (*mcp.CallToolResult, SchemaDiffOutput, error) {
 	if input.SourceDatabase == "" || input.TargetDatabase == "" {
 		return nil, SchemaDiffOutput{}, fmt.Errorf("source_database and target_database are required")
+	}
+	if err := requireAllowedDatabase(input.SourceDatabase); err != nil {
+		return nil, SchemaDiffOutput{}, err
+	}
+	if err := requireAllowedDatabase(input.TargetDatabase); err != nil {
+		return nil, SchemaDiffOutput{}, err
 	}
 
 	ctx, cancel := context.WithTimeout(ctx, queryTimeout)

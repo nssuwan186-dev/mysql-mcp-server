@@ -4,6 +4,7 @@ package mysql
 import (
 	"context"
 	"database/sql"
+	"database/sql/driver"
 	"errors"
 	"fmt"
 	"net"
@@ -135,11 +136,12 @@ func (c *Client) withTimeout(ctx context.Context) (context.Context, context.Canc
 }
 
 func (c *Client) execWithRetry(ctx context.Context, op func(context.Context) error) error {
-	bo := backoff.NewExponentialBackOff()
-	bo.MaxInterval = c.retryCfg.MaxInterval
+	ebo := backoff.NewExponentialBackOff()
+	ebo.MaxInterval = c.retryCfg.MaxInterval
 	// Disable MaxElapsedTime since we rely on MaxRetries
-	bo.MaxElapsedTime = 0
+	ebo.MaxElapsedTime = 0
 
+	var bo backoff.BackOff = backoff.WithContext(ebo, ctx)
 	b := backoff.WithMaxRetries(bo, uint64(c.retryCfg.MaxRetries))
 
 	return backoff.Retry(func() error {
@@ -167,7 +169,12 @@ func isTransientError(err error) bool {
 		return true
 	}
 
-	// Check for MySQL specific errors
+	if errors.Is(err, mysql.ErrInvalidConn) || errors.Is(err, driver.ErrBadConn) {
+		return true
+	}
+
+	// Server-side transient errors are reported as *mysql.MySQLError (ER_*).
+	// Client/connection issues (CR_*) typically surface as net.Error or driver bad-connection errors.
 	var mysqlErr *mysql.MySQLError
 	if errors.As(err, &mysqlErr) {
 		switch mysqlErr.Number {
@@ -177,20 +184,7 @@ func isTransientError(err error) bool {
 			return true
 		case 1205: // ER_LOCK_WAIT_TIMEOUT
 			return true
-		case 2002: // CR_CONNECTION_ERROR
-			return true
-		case 2003: // CR_CONN_HOST_ERROR
-			return true
-		case 2006: // CR_SERVER_GONE_ERROR
-			return true
-		case 2013: // CR_SERVER_LOST
-			return true
 		}
-	}
-
-	// Check for driver-specific errors that are not *mysql.MySQLError
-	if errors.Is(err, mysql.ErrInvalidConn) {
-		return true
 	}
 
 	return false
@@ -236,11 +230,7 @@ func (c *Client) ListTables(ctx context.Context, database string) ([]string, err
 		ctx, cancel := c.withTimeout(ctx)
 		defer cancel()
 
-		if _, err := c.db.ExecContext(ctx, "USE "+dbName); err != nil {
-			return err
-		}
-
-		rows, err := c.db.QueryContext(ctx, "SHOW TABLES")
+		rows, err := c.db.QueryContext(ctx, "SHOW TABLES FROM "+dbName)
 		if err != nil {
 			return err
 		}
@@ -278,11 +268,7 @@ func (c *Client) DescribeTable(ctx context.Context, database, table string) ([]m
 		ctx, cancel := c.withTimeout(ctx)
 		defer cancel()
 
-		if _, err := c.db.ExecContext(ctx, "USE "+dbName); err != nil {
-			return err
-		}
-
-		rows, err := c.db.QueryContext(ctx, "DESCRIBE "+tableName)
+		rows, err := c.db.QueryContext(ctx, "DESCRIBE "+dbName+"."+tableName)
 		if err != nil {
 			return err
 		}

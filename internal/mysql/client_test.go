@@ -10,6 +10,12 @@ import (
 	"github.com/go-sql-driver/mysql"
 )
 
+type testNetTempErr struct{}
+
+func (testNetTempErr) Error() string   { return "temporary network error" }
+func (testNetTempErr) Timeout() bool   { return true }
+func (testNetTempErr) Temporary() bool { return true }
+
 func newTestClient(t *testing.T) (*Client, sqlmock.Sqlmock) {
 	t.Helper()
 
@@ -89,8 +95,8 @@ func TestRunQueryWithRetry(t *testing.T) {
 
 	sqlText := "SELECT id FROM users"
 
-	// First call fails with a transient error
-	mock.ExpectQuery(sqlText).WillReturnError(&mysql.MySQLError{Number: 2006, Message: "MySQL server has gone away"})
+	// First call fails with a transient network-style error (covers net.Error path).
+	mock.ExpectQuery(sqlText).WillReturnError(testNetTempErr{})
 
 	// Second call succeeds
 	rows := sqlmock.NewRows([]string{"id"}).AddRow(1)

@@ -130,11 +130,15 @@ func (cm *ConnectionManager) AddConnectionWithPoolConfig(connCfg config.Connecti
 		if remoteAddr == "" {
 			remoteAddr = "127.0.0.1:3306"
 		}
+		strict := config.EffectiveStrictSSHHostKeyChecking(connCfg.SSH)
 		tunnelCfg := sshtunnel.Config{
-			Host:    connCfg.SSH.Host,
-			User:    connCfg.SSH.User,
-			KeyPath: connCfg.SSH.KeyPath,
-			Port:    connCfg.SSH.Port,
+			Host:                  connCfg.SSH.Host,
+			User:                  connCfg.SSH.User,
+			KeyPath:               connCfg.SSH.KeyPath,
+			Port:                  connCfg.SSH.Port,
+			InsecureIgnoreHostKey: !strict,
+			KnownHostsPath:        connCfg.SSH.KnownHostsPath,
+			HostKeyFingerprint:    connCfg.SSH.HostKeyFingerprint,
 		}
 		localAddr, closeTunnel, err := sshtunnel.Tunnel(tunnelCfg, remoteAddr)
 		if err != nil {

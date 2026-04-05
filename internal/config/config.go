@@ -31,6 +31,13 @@ type SSHConfig struct {
 	User    string `json:"ssh_user,omitempty"`
 	KeyPath string `json:"ssh_key_path,omitempty"`
 	Port    int    `json:"ssh_port,omitempty"` // 0 = default 22
+
+	// StrictHostKeyChecking verifies the bastion host key (default when nil: strict).
+	// Set to false only to disable verification (insecure, MITM risk).
+	StrictHostKeyChecking *bool `json:"ssh_strict_host_key_checking,omitempty"`
+
+	KnownHostsPath     string `json:"ssh_known_hosts,omitempty"`
+	HostKeyFingerprint string `json:"ssh_host_key_fingerprint,omitempty"`
 }
 
 // ConnectionConfig represents a single MySQL connection configuration.
@@ -262,6 +269,18 @@ func parseCSVList(s string) []string {
 	return out
 }
 
+// EffectiveStrictSSHHostKeyChecking returns whether SSH host keys must be verified.
+// Nil StrictHostKeyChecking means strict (verify).
+func EffectiveStrictSSHHostKeyChecking(s *SSHConfig) bool {
+	if s == nil {
+		return true
+	}
+	if s.StrictHostKeyChecking == nil {
+		return true
+	}
+	return *s.StrictHostKeyChecking
+}
+
 // AllowedDatabaseSet builds a case-insensitive lookup set for schema names.
 func AllowedDatabaseSet(list []string) map[string]struct{} {
 	m := make(map[string]struct{})
@@ -369,7 +388,32 @@ func loadGlobalSSHFromEnv() *SSHConfig {
 			port = p
 		}
 	}
-	return &SSHConfig{Host: host, User: user, KeyPath: keyPath, Port: port}
+	out := &SSHConfig{
+		Host:    host,
+		User:    user,
+		KeyPath: keyPath,
+		Port:    port,
+	}
+	if kh := strings.TrimSpace(os.Getenv("MYSQL_SSH_KNOWN_HOSTS")); kh != "" {
+		out.KnownHostsPath = kh
+	}
+	if fp := strings.TrimSpace(os.Getenv("MYSQL_SSH_HOST_KEY_FINGERPRINT")); fp != "" {
+		out.HostKeyFingerprint = fp
+	}
+	out.StrictHostKeyChecking = parseEnvStrictSSHHostKeyChecking()
+	return out
+}
+
+// parseEnvStrictSSHHostKeyChecking returns nil if MYSQL_SSH_STRICT_HOST_KEY_CHECKING is unset (default strict).
+func parseEnvStrictSSHHostKeyChecking() *bool {
+	raw := strings.TrimSpace(os.Getenv("MYSQL_SSH_STRICT_HOST_KEY_CHECKING"))
+	if raw == "" {
+		return nil
+	}
+	v := strings.ToLower(raw)
+	insecure := v == "0" || v == "false" || v == "no" || v == "off"
+	strict := !insecure
+	return &strict
 }
 
 // getEnvInt reads an integer from an environment variable with a default value.

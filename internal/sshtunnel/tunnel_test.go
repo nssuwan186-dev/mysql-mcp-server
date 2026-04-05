@@ -1,6 +1,7 @@
 package sshtunnel
 
 import (
+	"path/filepath"
 	"testing"
 )
 
@@ -32,6 +33,23 @@ func TestTunnel_InvalidKeyPath(t *testing.T) {
 	}, "mysql.internal:3306")
 	if err == nil {
 		t.Error("expected error for nonexistent key file")
+	}
+}
+
+func TestBuildHostKeyCallback_Insecure(t *testing.T) {
+	t.Parallel()
+	cb, err := buildHostKeyCallback(Config{InsecureIgnoreHostKey: true})
+	if err != nil || cb == nil {
+		t.Fatalf("buildHostKeyCallback: %v", err)
+	}
+}
+
+func TestBuildHostKeyCallback_StrictMissingKnownHosts(t *testing.T) {
+	t.Parallel()
+	p := filepath.Join(t.TempDir(), "no_such_known_hosts")
+	_, err := buildHostKeyCallback(Config{KnownHostsPath: p})
+	if err == nil {
+		t.Fatal("expected error when known_hosts file is missing")
 	}
 }
 
