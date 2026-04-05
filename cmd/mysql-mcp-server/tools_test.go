@@ -1189,6 +1189,29 @@ func TestToolRunQueryOffsetNegative(t *testing.T) {
 	}
 }
 
+// Regression: MYSQL_MAX_ROWS=0 with offset must not return next_offset equal to offset (Codex P2).
+func TestToolRunQueryOffsetPaginationRequiresPositiveLimit(t *testing.T) {
+	mock, cleanup := setupMockDB(t)
+	defer cleanup()
+
+	oldMaxRows := maxRows
+	maxRows = 0
+	defer func() { maxRows = oldMaxRows }()
+
+	off := 0
+	ctx := context.Background()
+	_, _, err := toolRunQuery(ctx, &mcp.CallToolRequest{}, RunQueryInput{
+		SQL:    "SELECT id FROM t ORDER BY id",
+		Offset: &off,
+	})
+	if err == nil {
+		t.Fatal("expected error when offset pagination is used with non-positive row limit")
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Errorf("unfulfilled expectations: %v", err)
+	}
+}
+
 func TestToolRunQueryPaginationRequiresSelect(t *testing.T) {
 	mock, cleanup := setupMockDB(t)
 	defer cleanup()

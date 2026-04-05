@@ -255,9 +255,27 @@ func tableExists(ctx context.Context, database, table string) (bool, error) {
 	return false, fmt.Errorf("table existence check failed: %w", err)
 }
 
+// scanAndNormalizeRow reads one row from rows and returns normalized cell values.
+func scanAndNormalizeRow(rows *sql.Rows, ncols int) ([]interface{}, error) {
+	values := make([]interface{}, ncols)
+	valuePtrs := make([]interface{}, ncols)
+	for i := range values {
+		valuePtrs[i] = &values[i]
+	}
+	if err := rows.Scan(valuePtrs...); err != nil {
+		return nil, fmt.Errorf("failed to scan row: %w", err)
+	}
+	rowValues := make([]interface{}, ncols)
+	for i, v := range values {
+		rowValues[i] = util.NormalizeValue(v)
+	}
+	return rowValues, nil
+}
+
 // runQueryScan executes finalSQL on a dedicated connection (USE database when set),
 // scans rows, and enforces limit. When paginated is true, finalSQL must request at
 // most limit+1 rows (server-side); HasMore and NextOffset are derived from the extra row.
+// limit must be positive when paginated is true (callers validate).
 func runQueryScan(ctx context.Context, db *sql.DB, finalSQL, database string, limit int, paginated bool, pageOffset int) (QueryResult, error) {
 	conn, err := db.Conn(ctx)
 	if err != nil {
@@ -299,63 +317,28 @@ func runQueryScan(ctx context.Context, db *sql.DB, finalSQL, database string, li
 	}
 	out.Columns = columns
 
-	if paginated {
-		for rows.Next() {
-			values := make([]interface{}, len(columns))
-			valuePtrs := make([]interface{}, len(columns))
-			for i := range values {
-				valuePtrs[i] = &values[i]
-			}
-
-			if err := rows.Scan(valuePtrs...); err != nil {
-				_ = rows.Close()
-				rowsClosed = true
-				return QueryResult{}, fmt.Errorf("failed to scan row: %w", err)
-			}
-
-			rowValues := make([]interface{}, len(columns))
-			for i, v := range values {
-				rowValues[i] = util.NormalizeValue(v)
-			}
-
-			if len(out.Rows) < limit {
-				out.Rows = append(out.Rows, rowValues)
-				continue
-			}
+	ncols := len(columns)
+	for rows.Next() {
+		rowValues, err := scanAndNormalizeRow(rows, ncols)
+		if err != nil {
+			_ = rows.Close()
+			rowsClosed = true
+			return QueryResult{}, err
+		}
+		if len(out.Rows) < limit {
+			out.Rows = append(out.Rows, rowValues)
+			continue
+		}
+		if paginated {
 			out.HasMore = true
 			break
 		}
-	} else {
-		for rows.Next() {
-			values := make([]interface{}, len(columns))
-			valuePtrs := make([]interface{}, len(columns))
-			for i := range values {
-				valuePtrs[i] = &values[i]
-			}
-
-			if err := rows.Scan(valuePtrs...); err != nil {
-				_ = rows.Close()
-				rowsClosed = true
-				return QueryResult{}, fmt.Errorf("failed to scan row: %w", err)
-			}
-
-			rowValues := make([]interface{}, len(columns))
-			for i, v := range values {
-				rowValues[i] = util.NormalizeValue(v)
-			}
-
-			if len(out.Rows) < limit {
-				out.Rows = append(out.Rows, rowValues)
-				continue
-			}
-
-			out.Truncated = true
-			if err := rows.Close(); err != nil {
-				return QueryResult{}, fmt.Errorf("failed to close rows: %w", err)
-			}
-			rowsClosed = true
-			break
+		out.Truncated = true
+		if err := rows.Close(); err != nil {
+			return QueryResult{}, fmt.Errorf("failed to close rows: %w", err)
 		}
+		rowsClosed = true
+		break
 	}
 
 	if !rowsClosed {
@@ -443,6 +426,12 @@ func toolRunQuery(
 		pageOffset = *input.Offset
 		if pageOffset < 0 {
 			return nil, QueryResult{}, fmt.Errorf("offset must be non-negative")
+		}
+		if limit <= 0 {
+			return nil, QueryResult{}, fmt.Errorf(
+				"offset pagination requires a positive effective row limit (got %d; check MYSQL_MAX_ROWS and run_query max_rows)",
+				limit,
+			)
 		}
 	}
 
