@@ -35,11 +35,11 @@ type SSHConfig struct {
 
 // ConnectionConfig represents a single MySQL connection configuration.
 type ConnectionConfig struct {
-	Name        string    `json:"name"`
-	DSN         string    `json:"dsn"`
-	Description string    `json:"description,omitempty"`
-	ReadOnly    bool      `json:"read_only,omitempty"`
-	SSL         string    `json:"ssl,omitempty"` // "true", "false", "skip-verify", or empty (use DSN as-is)
+	Name        string     `json:"name"`
+	DSN         string     `json:"dsn"`
+	Description string     `json:"description,omitempty"`
+	ReadOnly    bool       `json:"read_only,omitempty"`
+	SSL         string     `json:"ssl,omitempty"` // "true", "false", "skip-verify", or empty (use DSN as-is)
 	SSH         *SSHConfig `json:"ssh,omitempty"` // optional SSH tunnel (bastion)
 }
 
@@ -63,7 +63,9 @@ type Config struct {
 	ExtendedMode bool
 	VectorMode   bool
 	HTTPMode     bool
+	MetricsHTTP  bool // Serve /status + /api/metrics/tokens on HTTP while MCP uses stdio (Claude Desktop)
 	JSONLogging  bool
+	TokenCard    bool // Enable live monitoring UI at /status
 
 	// Token estimation (optional, disabled by default)
 	TokenTracking bool
@@ -83,6 +85,13 @@ type Config struct {
 
 	// Masking
 	MaskColumns []string
+
+	// Security / access (optional)
+	AllowedDatabases []string // Empty = all databases allowed (subject to MySQL grants)
+	StrictReadOnly   bool     // SET transaction_read_only=ON on each driver connection (DSN param)
+	ProcessAdmin     bool     // Enable process_list and kill_query (extended tools)
+	ReadAuditTool    bool     // Enable read_audit_log when AuditLogPath is set (extended)
+	SlowQueryTool    bool     // Enable slow_query_log tool (extended)
 }
 
 // Load reads configuration from config file (if present) and environment variables.
@@ -141,11 +150,19 @@ func applyEnvOverrides(cfg *Config) {
 	if v := os.Getenv("MYSQL_MAX_ROWS"); v != "" {
 		cfg.MaxRows = getEnvInt("MYSQL_MAX_ROWS", cfg.MaxRows)
 	}
+	// MYSQL_QUERY_TIMEOUT_SECONDS takes precedence over MYSQL_QUERY_TIMEOUT (ms).
 	if v := os.Getenv("MYSQL_QUERY_TIMEOUT_SECONDS"); v != "" {
 		cfg.QueryTimeout = time.Duration(getEnvInt("MYSQL_QUERY_TIMEOUT_SECONDS", int(cfg.QueryTimeout.Seconds()))) * time.Second
+	} else if v := os.Getenv("MYSQL_QUERY_TIMEOUT"); v != "" {
+		// MYSQL_QUERY_TIMEOUT accepts a value in milliseconds (e.g. 30000 for 30 s).
+		cfg.QueryTimeout = time.Duration(getEnvInt("MYSQL_QUERY_TIMEOUT", int(cfg.QueryTimeout.Milliseconds()))) * time.Millisecond
 	}
+	// MYSQL_MAX_OPEN_CONNS takes precedence over MYSQL_POOL_SIZE.
 	if v := os.Getenv("MYSQL_MAX_OPEN_CONNS"); v != "" {
 		cfg.MaxOpenConns = getEnvInt("MYSQL_MAX_OPEN_CONNS", cfg.MaxOpenConns)
+	} else if v := os.Getenv("MYSQL_POOL_SIZE"); v != "" {
+		// MYSQL_POOL_SIZE is an alias for MYSQL_MAX_OPEN_CONNS.
+		cfg.MaxOpenConns = getEnvInt("MYSQL_POOL_SIZE", cfg.MaxOpenConns)
 	}
 	if v := os.Getenv("MYSQL_MAX_IDLE_CONNS"); v != "" {
 		cfg.MaxIdleConns = getEnvInt("MYSQL_MAX_IDLE_CONNS", cfg.MaxIdleConns)
@@ -168,6 +185,9 @@ func applyEnvOverrides(cfg *Config) {
 	if v := os.Getenv("MYSQL_MCP_HTTP"); v != "" {
 		cfg.HTTPMode = getEnvBool("MYSQL_MCP_HTTP")
 	}
+	if v := os.Getenv("MYSQL_MCP_METRICS_HTTP"); v != "" {
+		cfg.MetricsHTTP = getEnvBool("MYSQL_MCP_METRICS_HTTP")
+	}
 	if v := os.Getenv("MYSQL_MCP_JSON_LOGS"); v != "" {
 		cfg.JSONLogging = getEnvBool("MYSQL_MCP_JSON_LOGS")
 	}
@@ -176,6 +196,17 @@ func applyEnvOverrides(cfg *Config) {
 	}
 	if v := os.Getenv("MYSQL_MCP_TOKEN_MODEL"); v != "" {
 		cfg.TokenModel = strings.TrimSpace(v)
+	}
+	if v := os.Getenv("MYSQL_MCP_TOKEN_CARD"); v != "" {
+		cfg.TokenCard = getEnvBool("MYSQL_MCP_TOKEN_CARD")
+	}
+	// When HTTP is enabled via MYSQL_MCP_HTTP, serve /status by default (e.g. brew, launchd). Set MYSQL_MCP_TOKEN_CARD=0 to disable.
+	if cfg.HTTPMode && os.Getenv("MYSQL_MCP_TOKEN_CARD") == "" && strings.TrimSpace(os.Getenv("MYSQL_MCP_HTTP")) != "" {
+		cfg.TokenCard = true
+	}
+	// Metrics-only HTTP alongside stdio MCP: /status by default when MYSQL_MCP_METRICS_HTTP=1.
+	if cfg.MetricsHTTP && !cfg.HTTPMode && os.Getenv("MYSQL_MCP_TOKEN_CARD") == "" {
+		cfg.TokenCard = true
 	}
 	if v := os.Getenv("MYSQL_HTTP_PORT"); v != "" {
 		cfg.HTTPPort = getEnvInt("MYSQL_HTTP_PORT", cfg.HTTPPort)
@@ -196,14 +227,51 @@ func applyEnvOverrides(cfg *Config) {
 		cfg.AuditLogPath = strings.TrimSpace(v)
 	}
 	if v := os.Getenv("MYSQL_MCP_MASK_COLUMNS"); v != "" {
-		parts := strings.Split(v, ",")
-		for _, p := range parts {
-			trimmed := strings.TrimSpace(p)
-			if trimmed != "" {
-				cfg.MaskColumns = append(cfg.MaskColumns, trimmed)
-			}
+		cfg.MaskColumns = parseCSVList(v)
+	}
+	if cfg.HTTPMode {
+		cfg.MetricsHTTP = false // full REST API replaces metrics-only sidecar
+	}
+	if v := os.Getenv("MYSQL_MCP_ALLOWED_DATABASES"); v != "" {
+		cfg.AllowedDatabases = parseCSVList(v)
+	}
+	if v := os.Getenv("MYSQL_MCP_STRICT_READ_ONLY"); v != "" {
+		cfg.StrictReadOnly = getEnvBool("MYSQL_MCP_STRICT_READ_ONLY")
+	}
+	if v := os.Getenv("MYSQL_MCP_PROCESS_ADMIN"); v != "" {
+		cfg.ProcessAdmin = getEnvBool("MYSQL_MCP_PROCESS_ADMIN")
+	}
+	if v := os.Getenv("MYSQL_MCP_READ_AUDIT_TOOL"); v != "" {
+		cfg.ReadAuditTool = getEnvBool("MYSQL_MCP_READ_AUDIT_TOOL")
+	}
+	if v := os.Getenv("MYSQL_MCP_SLOW_QUERY_TOOL"); v != "" {
+		cfg.SlowQueryTool = getEnvBool("MYSQL_MCP_SLOW_QUERY_TOOL")
+	}
+}
+
+// parseCSVList splits comma-separated values, trims space, drops empties.
+func parseCSVList(s string) []string {
+	parts := strings.Split(s, ",")
+	var out []string
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			out = append(out, p)
 		}
 	}
+	return out
+}
+
+// AllowedDatabaseSet builds a case-insensitive lookup set for schema names.
+func AllowedDatabaseSet(list []string) map[string]struct{} {
+	m := make(map[string]struct{})
+	for _, s := range list {
+		s = strings.TrimSpace(s)
+		if s != "" {
+			m[strings.ToLower(s)] = struct{}{}
+		}
+	}
+	return m
 }
 
 // loadConnections loads DSN configurations from environment variables.
@@ -317,9 +385,16 @@ func getEnvInt(key string, def int) int {
 	return n
 }
 
-// getEnvBool reads a boolean from an environment variable (1 = true).
+// getEnvBool reads a boolean from an environment variable.
+// True: 1, true, yes, on, y (case-insensitive, trimmed). False: 0, false, no, off, empty, or unknown.
 func getEnvBool(key string) bool {
-	return os.Getenv(key) == "1"
+	v := strings.TrimSpace(strings.ToLower(os.Getenv(key)))
+	switch v {
+	case "1", "true", "yes", "on", "y":
+		return true
+	default:
+		return false
+	}
 }
 
 // GetEnvInt is exported for use by other packages.

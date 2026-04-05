@@ -2,11 +2,14 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 )
@@ -22,6 +25,9 @@ type LogEntry struct {
 }
 
 func logJSON(level, message string, fields map[string]interface{}) {
+	if silentMode && (level == "INFO" || level == "WARN") {
+		return
+	}
 	entry := LogEntry{
 		Timestamp: time.Now().UTC().Format(time.RFC3339Nano),
 		Level:     level,
@@ -75,9 +81,12 @@ type AuditEntry struct {
 // AuditLogger handles writing audit logs to a file.
 type AuditLogger struct {
 	file    *os.File
+	path    string
 	mu      sync.Mutex
 	enabled bool
 }
+
+const auditReadTailMaxBytes = 512 * 1024
 
 // NewAuditLogger creates a new audit logger.
 // If path is empty, the logger is disabled.
@@ -93,7 +102,61 @@ func NewAuditLogger(path string) (*AuditLogger, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to open audit log: %w", err)
 	}
-	return &AuditLogger{file: f, enabled: true}, nil
+	return &AuditLogger{file: f, path: cleanPath, enabled: true}, nil
+}
+
+// ReadRecentLines returns up to maxLines non-empty lines from the end of the audit file.
+func (a *AuditLogger) ReadRecentLines(maxLines int) ([]string, bool, error) {
+	if !a.enabled || a.path == "" {
+		return nil, false, fmt.Errorf("audit log is not enabled")
+	}
+	if maxLines < 1 {
+		maxLines = 50
+	}
+	if maxLines > 500 {
+		maxLines = 500
+	}
+	info, err := os.Stat(a.path)
+	if err != nil {
+		return nil, false, fmt.Errorf("audit log stat: %w", err)
+	}
+	size := info.Size()
+	var start int64
+	if size > auditReadTailMaxBytes {
+		start = size - auditReadTailMaxBytes
+	}
+	f, err := os.Open(a.path) // #nosec G304 -- path from trusted config only
+	if err != nil {
+		return nil, false, fmt.Errorf("audit log open for read: %w", err)
+	}
+	defer f.Close()
+	if start > 0 {
+		if _, err := f.Seek(start, io.SeekStart); err != nil {
+			return nil, false, fmt.Errorf("audit log seek: %w", err)
+		}
+	}
+	data, err := io.ReadAll(f)
+	if err != nil {
+		return nil, false, fmt.Errorf("audit log read: %w", err)
+	}
+	truncated := start > 0
+	if start > 0 {
+		if idx := bytes.IndexByte(data, '\n'); idx >= 0 {
+			data = data[idx+1:]
+		}
+	}
+	lines := bytes.Split(data, []byte{'\n'})
+	out := make([]string, 0, maxLines)
+	for i := len(lines) - 1; i >= 0 && len(out) < maxLines; i-- {
+		line := strings.TrimSpace(string(lines[i]))
+		if line != "" {
+			out = append(out, line)
+		}
+	}
+	for i, j := 0, len(out)-1; i < j; i, j = i+1, j-1 {
+		out[i], out[j] = out[j], out[i]
+	}
+	return out, truncated, nil
 }
 
 // Log writes an audit entry to the log file.

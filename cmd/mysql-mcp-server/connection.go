@@ -46,6 +46,48 @@ func NewConnectionManager() *ConnectionManager {
 	}
 }
 
+// applyDefaultIOTimeouts ensures the MySQL driver read/write deadlines are set when the DSN
+// omits them. Without this, a query can block indefinitely at the TCP layer if context
+// cancellation does not unblock the driver (metadata locks, proxy stalls, etc.).
+func applyDefaultIOTimeouts(dsn string, queryTimeout time.Duration) (string, error) {
+	mysqlCfg, err := mysql.ParseDSN(dsn)
+	if err != nil {
+		return "", err
+	}
+	deadline := queryTimeout
+	if deadline <= 0 {
+		deadline = time.Duration(config.DefaultQueryTimeoutSecs) * time.Second
+	}
+	// Small margin after the logical query timeout for the server to flush result packets.
+	const margin = 2 * time.Second
+	if mysqlCfg.ReadTimeout == 0 {
+		mysqlCfg.ReadTimeout = deadline + margin
+	}
+	if mysqlCfg.WriteTimeout == 0 {
+		mysqlCfg.WriteTimeout = deadline + margin
+	}
+	return mysqlCfg.FormatDSN(), nil
+}
+
+// applyStrictReadOnlyDSN sets session parameter transaction_read_only=ON so each new
+// physical connection executes SET via the driver (see go-sql-driver/mysql handleParams).
+// Any existing DSN value for this param is replaced so strict mode cannot be bypassed.
+func applyStrictReadOnlyDSN(dsn string, strict bool) (string, error) {
+	if !strict {
+		return dsn, nil
+	}
+	mysqlCfg, err := mysql.ParseDSN(dsn)
+	if err != nil {
+		return "", err
+	}
+	if mysqlCfg.Params == nil {
+		mysqlCfg.Params = make(map[string]string)
+	}
+	// Always force ON so a DSN cannot override strict mode with OFF (or other values).
+	mysqlCfg.Params["transaction_read_only"] = "ON"
+	return mysqlCfg.FormatDSN(), nil
+}
+
 // AddConnectionWithPoolConfig adds a new connection with pool configuration.
 // If a connection with the same name already exists, it and its SSH tunnel (if any) are closed and replaced.
 func (cm *ConnectionManager) AddConnectionWithPoolConfig(connCfg config.ConnectionConfig, cfg *config.Config) error {
@@ -68,6 +110,15 @@ func (cm *ConnectionManager) AddConnectionWithPoolConfig(connCfg config.Connecti
 	}
 
 	dsn := config.ApplySSLToDSN(connCfg.DSN, connCfg.SSL)
+	var err error
+	dsn, err = applyDefaultIOTimeouts(dsn, cfg.QueryTimeout)
+	if err != nil {
+		return fmt.Errorf("failed to parse DSN for %s: %w", connCfg.Name, err)
+	}
+	dsn, err = applyStrictReadOnlyDSN(dsn, cfg.StrictReadOnly)
+	if err != nil {
+		return fmt.Errorf("failed to parse DSN for %s: %w", connCfg.Name, err)
+	}
 
 	// If SSH tunnel is configured, start tunnel and rewrite DSN to use local listener
 	if connCfg.SSH != nil && connCfg.SSH.Host != "" && connCfg.SSH.User != "" && connCfg.SSH.KeyPath != "" {

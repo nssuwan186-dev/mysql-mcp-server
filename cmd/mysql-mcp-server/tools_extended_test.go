@@ -3,6 +3,8 @@ package main
 
 import (
 	"context"
+	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -658,11 +660,12 @@ func TestToolListStatusSuccess(t *testing.T) {
 	mock, cleanup := setupExtendedMockDB(t)
 	defer cleanup()
 
-	rows := sqlmock.NewRows([]string{"Variable_name", "Value"}).
+	rows := sqlmock.NewRows([]string{"VARIABLE_NAME", "VARIABLE_VALUE"}).
 		AddRow("Uptime", "12345").
 		AddRow("Threads_connected", "5")
 
-	mock.ExpectQuery("SHOW GLOBAL STATUS").WillReturnRows(rows)
+	mock.ExpectQuery("SELECT VARIABLE_NAME, VARIABLE_VALUE FROM performance_schema.global_status ORDER BY VARIABLE_NAME").
+		WillReturnRows(rows)
 
 	ctx := context.Background()
 	_, output, err := toolListStatus(ctx, &mcp.CallToolRequest{}, ListStatusInput{})
@@ -684,11 +687,13 @@ func TestToolListStatusWithPattern(t *testing.T) {
 	mock, cleanup := setupExtendedMockDB(t)
 	defer cleanup()
 
-	rows := sqlmock.NewRows([]string{"Variable_name", "Value"}).
+	rows := sqlmock.NewRows([]string{"VARIABLE_NAME", "VARIABLE_VALUE"}).
 		AddRow("Threads_connected", "5").
 		AddRow("Threads_running", "2")
 
-	mock.ExpectQuery("SHOW GLOBAL STATUS LIKE").WillReturnRows(rows)
+	mock.ExpectQuery("SELECT VARIABLE_NAME, VARIABLE_VALUE FROM performance_schema.global_status WHERE VARIABLE_NAME LIKE .* ORDER BY VARIABLE_NAME").
+		WithArgs("Threads%").
+		WillReturnRows(rows)
 
 	ctx := context.Background()
 	_, output, err := toolListStatus(ctx, &mcp.CallToolRequest{}, ListStatusInput{
@@ -697,6 +702,68 @@ func TestToolListStatusWithPattern(t *testing.T) {
 
 	if err != nil {
 		t.Fatalf("toolListStatus failed: %v", err)
+	}
+
+	if len(output.Variables) != 2 {
+		t.Errorf("expected 2 variables, got %d", len(output.Variables))
+	}
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Errorf("unfulfilled expectations: %v", err)
+	}
+}
+
+func TestToolListStatusFallback(t *testing.T) {
+	mock, cleanup := setupExtendedMockDB(t)
+	defer cleanup()
+
+	// Primary performance_schema query fails
+	mock.ExpectQuery("SELECT VARIABLE_NAME, VARIABLE_VALUE FROM performance_schema.global_status ORDER BY VARIABLE_NAME").
+		WillReturnError(fmt.Errorf("Table 'performance_schema.global_status' doesn't exist"))
+
+	// Fallback SHOW GLOBAL STATUS succeeds
+	rows := sqlmock.NewRows([]string{"Variable_name", "Value"}).
+		AddRow("Uptime", "12345").
+		AddRow("Threads_connected", "5")
+	mock.ExpectQuery("SHOW GLOBAL STATUS").WillReturnRows(rows)
+
+	ctx := context.Background()
+	_, output, err := toolListStatus(ctx, &mcp.CallToolRequest{}, ListStatusInput{})
+
+	if err != nil {
+		t.Fatalf("toolListStatus fallback failed: %v", err)
+	}
+
+	if len(output.Variables) != 2 {
+		t.Errorf("expected 2 variables, got %d", len(output.Variables))
+	}
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Errorf("unfulfilled expectations: %v", err)
+	}
+}
+
+func TestToolListStatusFallbackWithPattern(t *testing.T) {
+	mock, cleanup := setupExtendedMockDB(t)
+	defer cleanup()
+
+	// Primary performance_schema query fails
+	mock.ExpectQuery("SELECT VARIABLE_NAME, VARIABLE_VALUE FROM performance_schema.global_status WHERE VARIABLE_NAME LIKE .* ORDER BY VARIABLE_NAME").
+		WillReturnError(fmt.Errorf("Table 'performance_schema.global_status' doesn't exist"))
+
+	// Fallback SHOW GLOBAL STATUS LIKE succeeds
+	rows := sqlmock.NewRows([]string{"Variable_name", "Value"}).
+		AddRow("Threads_connected", "5").
+		AddRow("Threads_running", "2")
+	mock.ExpectQuery("SHOW GLOBAL STATUS LIKE").WithArgs("Threads%").WillReturnRows(rows)
+
+	ctx := context.Background()
+	_, output, err := toolListStatus(ctx, &mcp.CallToolRequest{}, ListStatusInput{
+		Pattern: "Threads%",
+	})
+
+	if err != nil {
+		t.Fatalf("toolListStatus fallback with pattern failed: %v", err)
 	}
 
 	if len(output.Variables) != 2 {
@@ -741,10 +808,10 @@ func TestToolListVariablesWithPattern(t *testing.T) {
 	defer cleanup()
 
 	rows := sqlmock.NewRows([]string{"Variable_name", "Value"}).
-		AddRow("innodb_buffer_pool_size", "134217728").
-		AddRow("innodb_buffer_pool_instances", "1")
+		AddRow("innodb_buffer_pool_instances", "1").
+		AddRow("innodb_buffer_pool_size", "134217728")
 
-	mock.ExpectQuery("SHOW GLOBAL VARIABLES LIKE").WillReturnRows(rows)
+	mock.ExpectQuery("SHOW GLOBAL VARIABLES LIKE").WithArgs("innodb_buffer%").WillReturnRows(rows)
 
 	ctx := context.Background()
 	_, output, err := toolListVariables(ctx, &mcp.CallToolRequest{}, ListVariablesInput{
@@ -753,6 +820,67 @@ func TestToolListVariablesWithPattern(t *testing.T) {
 
 	if err != nil {
 		t.Fatalf("toolListVariables failed: %v", err)
+	}
+
+	if len(output.Variables) != 2 {
+		t.Errorf("expected 2 variables, got %d", len(output.Variables))
+	}
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Errorf("unfulfilled expectations: %v", err)
+	}
+}
+
+func TestToolListVariablesFallback(t *testing.T) {
+	mock, cleanup := setupExtendedMockDB(t)
+	defer cleanup()
+
+	mock.ExpectQuery("SHOW GLOBAL VARIABLES").
+		WillReturnError(fmt.Errorf("access denied"))
+
+	rows := sqlmock.NewRows([]string{"VARIABLE_NAME", "VARIABLE_VALUE"}).
+		AddRow("max_connections", "151").
+		AddRow("innodb_buffer_pool_size", "134217728")
+	mock.ExpectQuery("SELECT VARIABLE_NAME, VARIABLE_VALUE FROM performance_schema.global_variables ORDER BY VARIABLE_NAME").
+		WillReturnRows(rows)
+
+	ctx := context.Background()
+	_, output, err := toolListVariables(ctx, &mcp.CallToolRequest{}, ListVariablesInput{})
+
+	if err != nil {
+		t.Fatalf("toolListVariables fallback failed: %v", err)
+	}
+
+	if len(output.Variables) != 2 {
+		t.Errorf("expected 2 variables, got %d", len(output.Variables))
+	}
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Errorf("unfulfilled expectations: %v", err)
+	}
+}
+
+func TestToolListVariablesFallbackWithPattern(t *testing.T) {
+	mock, cleanup := setupExtendedMockDB(t)
+	defer cleanup()
+
+	mock.ExpectQuery("SHOW GLOBAL VARIABLES LIKE").WithArgs("innodb_buffer%").
+		WillReturnError(fmt.Errorf("access denied"))
+
+	rows := sqlmock.NewRows([]string{"VARIABLE_NAME", "VARIABLE_VALUE"}).
+		AddRow("innodb_buffer_pool_instances", "1").
+		AddRow("innodb_buffer_pool_size", "134217728")
+	mock.ExpectQuery("SELECT VARIABLE_NAME, VARIABLE_VALUE FROM performance_schema.global_variables WHERE VARIABLE_NAME LIKE .* ORDER BY VARIABLE_NAME").
+		WithArgs("innodb_buffer%").
+		WillReturnRows(rows)
+
+	ctx := context.Background()
+	_, output, err := toolListVariables(ctx, &mcp.CallToolRequest{}, ListVariablesInput{
+		Pattern: "innodb_buffer%",
+	})
+
+	if err != nil {
+		t.Fatalf("toolListVariables fallback with pattern failed: %v", err)
 	}
 
 	if len(output.Variables) != 2 {
@@ -934,4 +1062,209 @@ func TestToolVectorInfoMissingDatabase(t *testing.T) {
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Errorf("unfulfilled expectations: %v", err)
 	}
+}
+
+// ===== analyzeExplainPlan Tests =====
+
+func TestAnalyzeExplainPlanFullTableScanNoIndexes(t *testing.T) {
+	plan := []map[string]interface{}{
+		{
+			"table":         "orders",
+			"type":          "ALL",
+			"possible_keys": nil,
+			"key":           nil,
+			"Extra":         "",
+		},
+	}
+	warnings := analyzeExplainPlan(plan)
+	if len(warnings) == 0 {
+		t.Fatal("expected at least one warning for full table scan")
+	}
+	found := false
+	for _, w := range warnings {
+		if containsCI(w, "full table scan") && containsCI(w, "orders") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected full-table-scan warning for table 'orders', got: %v", warnings)
+	}
+}
+
+func TestAnalyzeExplainPlanFullTableScanWithCandidateIndexes(t *testing.T) {
+	plan := []map[string]interface{}{
+		{
+			"table":         "users",
+			"type":          "ALL",
+			"possible_keys": "idx_email,idx_name",
+			"key":           nil,
+			"Extra":         "",
+		},
+	}
+	warnings := analyzeExplainPlan(plan)
+	if len(warnings) == 0 {
+		t.Fatal("expected at least one warning")
+	}
+	found := false
+	for _, w := range warnings {
+		if containsCI(w, "full table scan") && containsCI(w, "idx_email") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected full-table-scan warning mentioning candidate indexes, got: %v", warnings)
+	}
+}
+
+func TestAnalyzeExplainPlanIndexAvailableButUnused(t *testing.T) {
+	plan := []map[string]interface{}{
+		{
+			"table":         "products",
+			"type":          "ref",
+			"possible_keys": "idx_category",
+			"key":           nil,
+			"Extra":         "",
+		},
+	}
+	warnings := analyzeExplainPlan(plan)
+	if len(warnings) == 0 {
+		t.Fatal("expected at least one warning for unused index")
+	}
+	found := false
+	for _, w := range warnings {
+		if containsCI(w, "idx_category") && containsCI(w, "none were chosen") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected unused-index warning, got: %v", warnings)
+	}
+}
+
+func TestAnalyzeExplainPlanNoUnusedIndexWarningWhenAccessTypeMissing(t *testing.T) {
+	plan := []map[string]interface{}{
+		{
+			"table":         "products",
+			"type":          nil,
+			"possible_keys": "idx_category",
+			"key":           nil,
+			"Extra":         "",
+		},
+	}
+	warnings := analyzeExplainPlan(plan)
+	for _, w := range warnings {
+		if containsCI(w, "none were chosen") {
+			t.Fatalf("did not expect unused-index warning when access type is unknown, got: %v", warnings)
+		}
+	}
+}
+
+func TestAnalyzeExplainPlanFilesort(t *testing.T) {
+	plan := []map[string]interface{}{
+		{
+			"table":         "orders",
+			"type":          "index",
+			"possible_keys": nil,
+			"key":           "PRIMARY",
+			"Extra":         "Using filesort",
+		},
+	}
+	warnings := analyzeExplainPlan(plan)
+	if len(warnings) == 0 {
+		t.Fatal("expected filesort warning")
+	}
+	found := false
+	for _, w := range warnings {
+		if containsCI(w, "filesort") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected filesort warning, got: %v", warnings)
+	}
+}
+
+func TestAnalyzeExplainPlanTemporaryTable(t *testing.T) {
+	plan := []map[string]interface{}{
+		{
+			"table":         "sales",
+			"type":          "ALL",
+			"possible_keys": nil,
+			"key":           nil,
+			"Extra":         "Using temporary; Using filesort",
+		},
+	}
+	warnings := analyzeExplainPlan(plan)
+	foundTmp := false
+	foundSort := false
+	for _, w := range warnings {
+		if containsCI(w, "temporary table") {
+			foundTmp = true
+		}
+		if containsCI(w, "filesort") {
+			foundSort = true
+		}
+	}
+	if !foundTmp {
+		t.Errorf("expected temporary-table warning, got: %v", warnings)
+	}
+	if !foundSort {
+		t.Errorf("expected filesort warning, got: %v", warnings)
+	}
+}
+
+func TestAnalyzeExplainPlanGoodPlan(t *testing.T) {
+	// A plan using a specific key with no problematic extras should produce no warnings.
+	plan := []map[string]interface{}{
+		{
+			"table":         "users",
+			"type":          "ref",
+			"possible_keys": "idx_email",
+			"key":           "idx_email",
+			"Extra":         "Using index",
+		},
+	}
+	warnings := analyzeExplainPlan(plan)
+	if len(warnings) != 0 {
+		t.Errorf("expected no warnings for efficient plan, got: %v", warnings)
+	}
+}
+
+func TestToolExplainQueryWarningsPopulated(t *testing.T) {
+	mock, cleanup := setupExtendedMockDB(t)
+	defer cleanup()
+
+	// Simulate a full-table scan plan row
+	rows := sqlmock.NewRows([]string{"id", "select_type", "table", "type", "possible_keys", "key", "key_len", "ref", "rows", "Extra"}).
+		AddRow(1, "SIMPLE", "orders", "ALL", nil, nil, nil, nil, 5000, "")
+
+	mock.ExpectQuery("EXPLAIN SELECT \\* FROM orders").WillReturnRows(rows)
+
+	ctx := context.Background()
+	_, output, err := toolExplainQuery(ctx, &mcp.CallToolRequest{}, ExplainQueryInput{
+		SQL: "SELECT * FROM orders",
+	})
+
+	if err != nil {
+		t.Fatalf("toolExplainQuery failed: %v", err)
+	}
+	if len(output.Plan) == 0 {
+		t.Error("expected non-empty plan")
+	}
+	if len(output.Warnings) == 0 {
+		t.Error("expected warnings for full table scan plan")
+	}
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Errorf("unfulfilled expectations: %v", err)
+	}
+}
+
+// containsCI is a case-insensitive substring check helper for test assertions.
+func containsCI(s, substr string) bool {
+	return strings.Contains(strings.ToLower(s), strings.ToLower(substr))
 }

@@ -3,7 +3,7 @@
 <div align="center">
   <img src="./MysqlMCPServerBanner.png" alt="MySQL MCP Server Banner" width="800"/>
   
-  [![Version](https://img.shields.io/badge/version-1.5.0-blue.svg)](https://github.com/askdba/mysql-mcp-server/releases)
+  [![Version](https://img.shields.io/badge/version-1.7.0-rc.3-blue.svg)](https://github.com/askdba/mysql-mcp-server/releases)
   [![Go](https://img.shields.io/badge/go-1.24+-00ADD8.svg)](https://golang.org/)
   [![License](https://img.shields.io/badge/license-Apache--2.0-green.svg)](LICENSE)
 </div>
@@ -25,7 +25,8 @@ This project exposes safe MySQL introspection tools to Claude Desktop via MCP. C
   - list_connections, use_connection (multi-DSN)
   - vector_search, vector_info (MySQL 9.0+)
 - Supports MySQL 8.0, 8.4, 9.0+ and MariaDB 10.x, 11.x
-- Query timeouts, structured logging, audit logs
+- Query timeouts, structured logging, audit logs; optional **live token metrics** and **`/status`** dashboard in HTTP mode
+- **Performance**: configurable pool/query timeouts, server-side row caps, `explain_query` plan warnings
 - Single Go binary
 - Unit and integration tests (Testcontainers)
 - Native integration with Claude Desktop MCP
@@ -37,6 +38,21 @@ This project exposes safe MySQL introspection tools to Claude Desktop via MCP. C
 ```bash
 brew install askdba/tap/mysql-mcp-server
 ```
+
+**Update local installation** (after a new release):
+
+```bash
+brew update && brew upgrade mysql-mcp-server
+```
+
+**Apple Silicon — “Cannot install under Rosetta 2 in ARM default prefix (/opt/homebrew)”**  
+Your shell is running **Homebrew under Rosetta (Intel)** while **`/opt/homebrew`** is **ARM**. They must match. Use one of:
+
+- Run upgrades as ARM: **`arch -arm64 brew upgrade mysql-mcp-server`** (or **`arch -arm64 /opt/homebrew/bin/brew upgrade mysql-mcp-server`**).
+- **Terminal.app → Get Info** → uncheck **Open using Rosetta**, then open a new terminal.
+- Put **`/opt/homebrew/bin`** first in **`PATH`** so you use the ARM `brew` and binary.
+
+**Claude Desktop:** on Apple Silicon, point **`command`** at **`/opt/homebrew/bin/mysql-mcp-server`**. **`/usr/local/opt/mysql-mcp-server/...`** is normally **Intel** Homebrew and can stay on an old version.
 
 ### Docker
 
@@ -68,17 +84,32 @@ Binary output: `bin/mysql-mcp-server`
 
 ## Quickstart
 
-Run the interactive setup script:
+### Option A: Homebrew (macOS/Linux)
+
+```bash
+brew install askdba/tap/mysql-mcp-server
+mysql-mcp-server --version
+```
+
+Then follow the client-specific setup in the [Claude Desktop](#claude-desktop-integration), [Claude Code](#claude-code-integration), or [Cursor IDE](#cursor-ide-integration) sections below.
+
+> **Tip:** `brew info askdba/tap/mysql-mcp-server` shows a config reminder after install.
+
+### Option B: Build from Source
+
+```bash
+git clone https://github.com/askdba/mysql-mcp-server.git
+cd mysql-mcp-server
+make build
+```
+
+When running from a cloned repo you can also use the interactive setup script:
 
 ```bash
 ./scripts/quickstart.sh
 ```
 
-This will:
-1. Test your MySQL connection
-2. Optionally create a read-only MCP user
-3. Generate your Claude Desktop configuration
-4. Optionally load a test dataset
+This will test your MySQL connection, optionally create a read-only MCP user, and generate your Claude Desktop configuration.
 
 ## Configuration
 
@@ -87,20 +118,29 @@ Environment variables:
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
 | MYSQL_DSN | Yes | – | MySQL DSN |
-| MYSQL_MAX_ROWS | No | 200 | Max rows returned |
-| MYSQL_QUERY_TIMEOUT_SECONDS | No | 30 | Query timeout |
+| MYSQL_MAX_ROWS | No | 200 | Max rows returned per query |
+| MYSQL_QUERY_TIMEOUT_SECONDS | No | 30 | Query timeout (seconds); wins over `MYSQL_QUERY_TIMEOUT` when both are set |
+| MYSQL_QUERY_TIMEOUT | No | – | Query timeout in **milliseconds** (e.g. `30000`); used only if `MYSQL_QUERY_TIMEOUT_SECONDS` is unset |
+| MYSQL_POOL_SIZE | No | – | Alias for `MYSQL_MAX_OPEN_CONNS` (pool size); `MYSQL_MAX_OPEN_CONNS` overrides when both are set |
 | MYSQL_MCP_EXTENDED | No | 0 | Enable extended tools (set to 1) |
 | MYSQL_MCP_JSON_LOGS | No | 0 | Enable JSON structured logging (set to 1) |
 | MYSQL_MCP_TOKEN_TRACKING | No | 0 | Enable estimated token usage tracking (set to 1) |
 | MYSQL_MCP_TOKEN_MODEL | No | cl100k_base | Tokenizer encoding to use for estimation |
+| MYSQL_MCP_TOKEN_CARD | No | **on** when `MYSQL_MCP_HTTP` is set | **`/status`** live token dashboard + listing in **`GET /api`**; omit to use default **on**; set to **0** to disable |
 | MYSQL_MCP_AUDIT_LOG | No | – | Path to audit log file |
+| MYSQL_MCP_ALLOWED_DATABASES | No | – | Comma-separated schema allowlist (empty = all allowed). With an allowlist, **`run_query`** rejects **`SHOW DATABASES`** / **`SHOW DATABASES LIKE`**—use **`list_databases`**. |
+| MYSQL_MCP_STRICT_READ_ONLY | No | 0 | Set `1` to enable `transaction_read_only=ON` on new connections |
+| MYSQL_MCP_PROCESS_ADMIN | No | 0 | Set `1` to enable **`process_list`** / **`kill_query`** (extended); **`kill_query`** issues **`KILL QUERY`** (cancels the running statement only, not the connection) |
+| MYSQL_MCP_READ_AUDIT_TOOL | No | 0 | Set `1` to enable `read_audit_log` when audit path is set |
+| MYSQL_MCP_SLOW_QUERY_TOOL | No | 0 | Set `1` to enable `slow_query_log` tool (extended) |
 | MYSQL_MCP_VECTOR | No | 0 | Enable vector tools for MySQL 9.0+ (set to 1) |
-| MYSQL_MCP_HTTP | No | 0 | Enable REST API mode (set to 1) |
-| MYSQL_HTTP_PORT | No | 9306 | HTTP port for REST API mode |
+| MYSQL_MCP_HTTP | No | 0 | Enable REST API mode (set to 1); **mutually exclusive** with stdio MCP |
+| MYSQL_MCP_METRICS_HTTP | No | 0 | With **stdio MCP only**: expose **`/status`** + **`/api/metrics/tokens`** on **`MYSQL_HTTP_PORT`** (same process as Claude/Cursor) |
+| MYSQL_HTTP_PORT | No | 9306 | Port for REST API **or** metrics sidecar |
 | MYSQL_HTTP_RATE_LIMIT | No | 0 | Enable rate limiting for HTTP mode (set to 1) |
 | MYSQL_HTTP_RATE_LIMIT_RPS | No | 100 | Rate limit: requests per second |
 | MYSQL_HTTP_RATE_LIMIT_BURST | No | 200 | Rate limit: burst size |
-| MYSQL_MAX_OPEN_CONNS | No | 10 | Max open database connections |
+| MYSQL_MAX_OPEN_CONNS | No | 10 | Max open database connections (overrides `MYSQL_POOL_SIZE` when both are set) |
 | MYSQL_MAX_IDLE_CONNS | No | 5 | Max idle database connections |
 | MYSQL_CONN_MAX_LIFETIME_MINUTES | No | 30 | Connection max lifetime in minutes |
 | MYSQL_CONN_MAX_IDLE_TIME_MINUTES | No | 5 | Max idle time before connection is closed |
@@ -258,7 +298,15 @@ mysql-mcp-server --validate-config /path/to/config.yaml
 
 # Print current configuration as YAML
 mysql-mcp-server --print-config
+
+# Silent mode: suppress INFO/WARN logs (only errors to stderr)
+mysql-mcp-server --silent --config /path/to/config.yaml
+
+# Daemon mode: run HTTP server in background (Unix; use with MYSQL_MCP_HTTP=1)
+MYSQL_MCP_HTTP=1 mysql-mcp-server --daemon --config /path/to/config.yaml
 ```
+
+**Silent and daemon mode:** Use `-s` / `--silent` to reduce log noise in production (INFO and WARN are suppressed; ERROR still goes to stderr). Use `-d` / `--daemon` to run the HTTP server detached in the background on Unix. For long-running services, use the example [systemd unit](contrib/systemd/mysql-mcp-server.service) or [launchd plist](contrib/launchd/com.askdba.mysql-mcp-server.plist). See [Silent and daemon mode](docs/silent-and-daemon.md) for details.
 
 **Priority:** Environment variables override config file values, allowing:
 - Base configuration in file
@@ -291,7 +339,7 @@ mysql-mcp-server --version
 
 Output:
 ```
-mysql-mcp-server v1.5.0
+mysql-mcp-server v1.7.0-rc.3
   Build time: 2025-12-21T11:43:11Z
   Git commit: a1b2c3d
 ```
@@ -321,13 +369,27 @@ Add:
 {
   "mcpServers": {
     "mysql": {
-      "command": "/absolute/path/to/bin/mysql-mcp-server",
+      "command": "mysql-mcp-server",
       "env": {
-        "MYSQL_DSN": "root:password@tcp(127.0.0.1:3306)/mysql?parseTime=true",
-        "MYSQL_MAX_ROWS": "200"
+        "MYSQL_DSN": "user:password@tcp(127.0.0.1:3306)/mydb?parseTime=true",
+        "MYSQL_MAX_ROWS": "200",
+        "MYSQL_MCP_EXTENDED": "1"
       }
     }
   }
+}
+```
+
+> **Note:** If Claude Desktop cannot find the binary, replace `"mysql-mcp-server"` with the full path from `which mysql-mcp-server`.
+
+**Token dashboard (`/status`) in the same process as MCP:** stdio MCP does not open HTTP by default. Set **`MYSQL_MCP_METRICS_HTTP=1`** so this instance also listens on **`MYSQL_HTTP_PORT`** (default **9306**) for **`http://127.0.0.1:9306/status`** and **`/api/metrics/tokens`** — the same counters as Claude’s tool calls. Use **`MYSQL_MCP_TOKEN_TRACKING=1`** so the dashboard is meaningful. Do **not** set **`MYSQL_MCP_HTTP=1`** here (that mode replaces MCP with full REST only).
+
+```json
+"env": {
+  "MYSQL_DSN": "user:password@tcp(127.0.0.1:3306)/mydb?parseTime=true",
+  "MYSQL_MCP_TOKEN_TRACKING": "1",
+  "MYSQL_MCP_METRICS_HTTP": "1",
+  "MYSQL_HTTP_PORT": "9306"
 }
 ```
 
@@ -371,6 +433,21 @@ Add:
 }
 ```
 
+**Token dashboard (`/status`) in the same process as MCP:** Same behavior as Claude Desktop — stdio MCP does not open HTTP by default. Set **`MYSQL_MCP_TOKEN_TRACKING=1`**, **`MYSQL_MCP_METRICS_HTTP=1`**, and **`MYSQL_HTTP_PORT`** (default **9306**) for **`http://127.0.0.1:9306/status`** and **`/api/metrics/tokens`**. Do **not** set **`MYSQL_MCP_HTTP=1`** here (full REST replaces stdio MCP).
+
+```json
+"env": {
+  "MYSQL_DSN": "root:password@tcp(127.0.0.1:3306)/mydb?parseTime=true",
+  "MYSQL_MAX_ROWS": "200",
+  "MYSQL_MCP_EXTENDED": "1",
+  "MYSQL_MCP_TOKEN_TRACKING": "1",
+  "MYSQL_MCP_METRICS_HTTP": "1",
+  "MYSQL_HTTP_PORT": "9306"
+}
+```
+
+Restart Cursor after editing `mcp.json`.
+
 **With Docker:**
 
 ```json
@@ -390,6 +467,32 @@ Add:
 ```
 
 Restart Cursor after saving the configuration.
+
+## Claude Code Integration
+
+Claude Code supports MCP servers via the CLI or a project-scoped `.mcp.json` file.
+
+### Option 1: CLI (quick setup)
+
+```bash
+claude mcp add --transport stdio \
+  --env MYSQL_DSN="user:password@tcp(127.0.0.1:3306)/mydb?parseTime=true" \
+  --env MYSQL_MCP_EXTENDED=1 \
+  mysql -- mysql-mcp-server
+```
+
+### Option 2: Project `.mcp.json`
+
+This repo includes a `.mcp.json` that Claude Code auto-discovers when you open the project. Set your DSN in the shell before starting Claude Code:
+
+```bash
+export MYSQL_DSN="user:password@tcp(127.0.0.1:3306)/mydb?parseTime=true"
+claude  # start Claude Code — MySQL tools will be available automatically
+```
+
+To use the same config in your own project, copy `.mcp.json` to your project root and set `MYSQL_DSN` in your shell.
+
+**Verify the integration** by asking Claude Code: *"List all databases on this MySQL server."*
 
 ## MCP Tools
 
@@ -586,7 +689,7 @@ Get the CREATE TABLE statement.
 
 ### explain_query
 
-Get execution plan for a SELECT query.
+Get execution plan for a SELECT query. Responses include optional **`warnings`** (e.g. full table scan, filesort) when the plan suggests optimizations.
 
 ```json
 { "sql": "SELECT * FROM users WHERE id = 1", "database": "myapp" }
@@ -783,15 +886,36 @@ All queries are automatically timed and logged with:
 
 ## Performance Tuning
 
-### Connection Pool
+### Connection pool and query timeouts
 
-Configure the connection pool for your workload:
+Configure the pool and how long queries may run (see also **`MYSQL_POOL_SIZE`** and **`MYSQL_QUERY_TIMEOUT`** / **`MYSQL_QUERY_TIMEOUT_SECONDS`** in the [configuration table](#configuration)):
 
 ```bash
-export MYSQL_MAX_OPEN_CONNS=20      # Max open connections
-export MYSQL_MAX_IDLE_CONNS=10      # Max idle connections  
+export MYSQL_MAX_OPEN_CONNS=20      # Max open connections (or use MYSQL_POOL_SIZE as an alias)
+export MYSQL_MAX_IDLE_CONNS=10      # Max idle connections
 export MYSQL_CONN_MAX_LIFETIME_MINUTES=60  # Connection lifetime
+export MYSQL_QUERY_TIMEOUT=30000    # Optional: timeout in ms (30 s) if you do not use MYSQL_QUERY_TIMEOUT_SECONDS
 ```
+
+`run_query` applies a server-side **`LIMIT`** when absent, returns **`truncated`** when more rows exist than the cap, and may **`warning`** on `SELECT *`. Use **`explain_query`** for plan **`warnings`** (full scans, filesort, etc.).
+
+**MySQL `max_execution_time` vs MCP timeouts:** The server enforces **`MYSQL_QUERY_TIMEOUT_SECONDS`** (or **`MYSQL_QUERY_TIMEOUT`** in ms) on the Go side for every tool. That is independent of the MySQL session variable `max_execution_time` (often `0`, meaning “no engine-side cap”). For operator clarity: configure MCP query timeout for how long the client should wait; configure MySQL if you also want the optimizer to abort expensive SELECTs.
+
+**Concurrent tool calls:** Each parallel MCP tool call may use a pooled connection. If the host issues several tools at once, set **`MYSQL_MAX_OPEN_CONNS`** (alias **`MYSQL_POOL_SIZE`**) high enough—e.g. **10–20**—so threads do not queue behind a single connection.
+
+### Security options and privileged tools (extended mode)
+
+| Variable | Purpose |
+|----------|---------|
+| `MYSQL_MCP_ALLOWED_DATABASES` | Comma-separated schema allowlist. When set, tools that take a `database` argument must use an allowed name; `list_databases` / `database_size` only expose allowed schemas; `run_query` requires `database` and cannot be used to hop schemas via omission. **`run_query`** rejects **`SHOW DATABASES`** and **`SHOW DATABASES LIKE`** (use **`list_databases`**). Qualified names in SQL, **`EXPLAIN`** (including **`FORMAT=`** / **`EXTENDED`**), and inner DML in **`EXPLAIN`** are checked against the allowlist. **`slow_query_log`** (table mode) only returns `mysql.slow_log` rows whose **`db`** column matches an allowed schema (case-insensitive); rows with null/empty `db` are omitted. |
+| `MYSQL_MCP_STRICT_READ_ONLY` | When `1`, new driver connections run with `transaction_read_only=ON` (harder to accidentally issue writes if grants allow them). |
+| `MYSQL_MCP_PROCESS_ADMIN` | Enables **`process_list`** and **`kill_query`** (issues **`KILL QUERY`**, not connection kill; plus HTTP `/api/processlist`, `/api/kill`). Requires appropriate MySQL privileges (`CONNECTION_ADMIN` / `PROCESS`, etc.). |
+| `MYSQL_MCP_READ_AUDIT_TOOL` | Enables **`read_audit_log`** when **`MYSQL_MCP_AUDIT_LOG`** is set (tail of the audit JSON file). |
+| `MYSQL_MCP_SLOW_QUERY_TOOL` | Enables **`slow_query_log`** (reads `mysql.slow_log` when `log_output` includes `TABLE`, otherwise returns file settings). |
+
+**`server_info`:** Pass **`detailed: true`** (MCP) or **`?detailed=1`** (HTTP) for ping latency, **`Threads_running`**, **`Slow_queries`**, **`Questions`**, and InnoDB buffer pool hit rate when stats are available. If **`MYSQL_MCP_TOKEN_TRACKING=1`**, **`token_metrics`** is always included (cumulative since process start).
+
+YAML file equivalents live under **`security:`** in the config file (`allowed_databases`, `strict_read_only`, `process_admin`, `read_audit_tool`, `slow_query_tool`).
 
 ## Testing
 
@@ -864,6 +988,8 @@ make test-sakila-84
 make test-sakila-90
 ```
 
+For a multi-version Sakila test matrix (including alternate ports and health-check helpers), see [`test-steps.md`](test-steps.md) at the repo root (canonical) or [`docs/sakila-test-steps.md`](docs/sakila-test-steps.md).
+
 The Sakila tests cover:
 - Multi-table JOINs (film→actors, customer→address→city→country)
 - Aggregation queries (COUNT, SUM, AVG, GROUP BY)
@@ -903,15 +1029,21 @@ make test-mysql-logs
 When running tests manually, set the DSN:
 
 ```bash
-# MySQL 8.0 (port 3306)
-export MYSQL_TEST_DSN="root:testpass@tcp(localhost:3306)/testdb?parseTime=true"
+# MySQL 8.0 (host port 13306 in docker-compose.test.yml — avoids local MySQL on 3306)
+export MYSQL_TEST_DSN="mcpuser:mcppass00@tcp(127.0.0.1:13306)/testdb?parseTime=true"
 
 # MySQL 8.4 (port 3307)
-export MYSQL_TEST_DSN="root:testpass@tcp(localhost:3307)/testdb?parseTime=true"
+export MYSQL_TEST_DSN="mcpuser:mcppass00@tcp(127.0.0.1:3307)/testdb?parseTime=true"
 
 # MySQL 9.0 (port 3308)
-export MYSQL_TEST_DSN="root:testpass@tcp(localhost:3308)/testdb?parseTime=true"
+export MYSQL_TEST_DSN="mcpuser:mcppass00@tcp(127.0.0.1:3308)/testdb?parseTime=true"
 ```
+
+Test credentials are **`mcpuser` / `mcppass00`** (see `tests/sql/mcp_test_user.sql`). On **`testdb`**, this user has DDL/DML so integration tests can create fixtures; **`sakila`** stays read-only via `mcp_test_user_sakila.sql`. After upgrading an existing Docker volume, recreate it so init scripts run: `docker compose -f docker-compose.test.yml down -v`.
+
+Prefer **`127.0.0.1`** over **`localhost`** when the database runs in Docker (especially on macOS): `localhost` may resolve to IPv6 (`::1`) while the published port is IPv4-only, causing connection timeouts until the DSN uses `127.0.0.1`.
+
+The **`mysql80`** service publishes **13306** on the host (not **3306**) so integration tests do not accidentally connect to a different MySQL instance already listening on **3306**.
 
 Then run tests directly:
 
@@ -1063,12 +1195,25 @@ export MYSQL_HTTP_RATE_LIMIT_BURST=200  # Allow bursts up to 200
 
 When rate limited, clients receive HTTP 429 (Too Many Requests) with a `Retry-After: 1` header.
 
+### Running as a service (daemon)
+
+To run the REST API server in the background or under a process manager:
+
+- **Unix (foreground detach):** `MYSQL_MCP_HTTP=1 mysql-mcp-server --daemon --config /path/to/config.yaml` (forks and exits the parent; child runs detached).
+- **systemd:** Copy and customize [contrib/systemd/mysql-mcp-server.service](contrib/systemd/mysql-mcp-server.service), then `systemctl enable --now mysql-mcp-server`.
+- **macOS launchd:** Copy and customize [contrib/launchd/com.askdba.mysql-mcp-server.plist](contrib/launchd/com.askdba.mysql-mcp-server.plist) into `~/Library/LaunchAgents/` or `/Library/LaunchDaemons/`.
+- **Windows:** Use a Windows Service wrapper or run in a terminal; `--daemon` is not supported.
+
+Use `--silent` to suppress INFO/WARN logs when running under a service manager. See [docs/silent-and-daemon.md](docs/silent-and-daemon.md).
+
 ### API Endpoints
+
+**Discovery (`GET /api`):** The JSON response includes an **`endpoints`** map that lists **only routes the server has registered** for the current configuration—same rules as the mux: core routes always; extended routes only if **`MYSQL_MCP_EXTENDED=1`**; **`/api/processlist`** and **`/api/kill`** only if extended **and** **`MYSQL_MCP_PROCESS_ADMIN=1`**; **`/api/audit-log`** only if extended **and** read-audit is enabled (**`MYSQL_MCP_READ_AUDIT_TOOL=1`** with **`MYSQL_MCP_AUDIT_LOG`**); **`/api/slow-log`** only if extended **and** **`MYSQL_MCP_SLOW_QUERY_TOOL=1`**; vector routes only if **`MYSQL_MCP_VECTOR=1`**; **`/status`** appears in the index only when the token card is enabled. **`modes`** in the JSON reflects **`extended`**, **`vector`**, and **`token_card`**.
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | GET | `/health` | Health check |
-| GET | `/api` | API index with all endpoints |
+| GET | `/api` | API index: registered endpoints + **`modes`** (see Discovery above) |
 | GET | `/api/databases` | List databases |
 | GET | `/api/tables?database=` | List tables |
 | GET | `/api/describe?database=&table=` | Describe table |
@@ -1095,6 +1240,10 @@ When rate limited, clients receive HTTP 429 (Too Many Requests) with a `Retry-Af
 | GET | `/api/foreign-keys?database=` | Foreign keys |
 | GET | `/api/status?pattern=` | Server status |
 | GET | `/api/variables?pattern=` | Server variables |
+| GET | `/api/audit-log?lines=` | Tail lines from the MCP audit log (JSON). Listed only when extended **and** **`MYSQL_MCP_READ_AUDIT_TOOL=1`** with **`MYSQL_MCP_AUDIT_LOG`** configured. |
+| GET | `/api/slow-log?limit=` | Slow query log rows or file/table settings. Listed only when extended **and** **`MYSQL_MCP_SLOW_QUERY_TOOL=1`**. |
+| GET | `/api/processlist` | Active MySQL threads (`SHOW FULL PROCESSLIST`). Listed only when extended **and** **`MYSQL_MCP_PROCESS_ADMIN=1`**. Requires MySQL **`PROCESS`** (or equivalent) to succeed. |
+| POST | `/api/kill` | Cancel the **current statement** on a connection: JSON body `{"id": <positive integer>}` (same id as **`/api/processlist`**). Executes **`KILL QUERY`**—the client connection stays open. Listed only when extended **and** **`MYSQL_MCP_PROCESS_ADMIN=1`**. Requires privilege to run **`KILL QUERY`** for that thread (e.g. **`CONNECTION_ADMIN`** or **`PROCESS`** as applicable). |
 
 **Vector endpoints** (requires `MYSQL_MCP_VECTOR=1`):
 
@@ -1102,6 +1251,13 @@ When rate limited, clients receive HTTP 429 (Too Many Requests) with a `Retry-Af
 |--------|----------|-------------|
 | POST | `/api/vector/search` | Vector similarity search |
 | GET | `/api/vector/info?database=` | Vector column info |
+
+**Token metrics** (HTTP mode; **`/status`** defaults **on** when `MYSQL_MCP_HTTP` is set—use `MYSQL_MCP_TOKEN_CARD=0` to hide it; YAML `features.token_card` applies when not using that default):
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/metrics/tokens` | Cumulative token usage, cost estimate, recent queries (always registered; zeros when tracking off) |
+| GET | `/status` | Live HTML dashboard (auto-refresh); listed in `GET /api` when the feature is enabled |
 
 ### Example Usage
 
@@ -1159,6 +1315,11 @@ docker run -p 9306:9306 \
   ghcr.io/askdba/mysql-mcp-server:latest
 ```
 
+## Documentation
+
+- **[SQL Query Optimization Guide](docs/query_optimization_guide.md)**: Practical optimization patterns and query rewriting techniques using the Stack Exchange schema.
+- **[Comprehensive MySQL Query Optimization Guide](docs/mysql_query_optimization_comprehensive.md)**: Deep technical insights into the query optimizer, advanced indexing strategies, execution plan analysis, and operational best practices.
+
 ## Project Structure
 
 ```
@@ -1214,20 +1375,9 @@ make release   # Build release binaries
 
 ## Releasing
 
-Releases are automated via GitHub Actions and GoReleaser.
+Releases are automated via GitHub Actions and GoReleaser. Full checklist: **[docs/releasing.md](docs/releasing.md)**.
 
-To create a new release:
-
-```bash
-git tag v1.0.0
-git push origin v1.0.0
-```
-
-This will automatically:
-1. Build binaries for macOS, Linux, and Windows
-2. Create a GitHub Release with changelog
-3. Push Docker image to `ghcr.io/askdba/mysql-mcp-server`
-4. Update Homebrew formula (if configured)
+Quick steps: update [CHANGELOG.md](CHANGELOG.md), commit, then `git tag vX.Y.Z` and `git push origin vX.Y.Z`. After the workflow runs, complete post-release steps (CHANGELOG on main if needed, Homebrew tap README, local `brew upgrade`). See the doc for details.
 
 ## License
 

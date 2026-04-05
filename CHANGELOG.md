@@ -6,40 +6,28 @@ The format is based on "Keep a Changelog" and this project follows
 Semantic Versioning.
 
 ## [Unreleased]
-### Added
-- SSH tunneling (bastion host) support: connect to MySQL via `ssh_host`, `ssh_user`, `ssh_key_path`, and optional `ssh_port` (config file or `MYSQL_SSH_*` env vars). `key_path` supports `~` and `~/path` (expanded to user home). Bastion host key verification is not performed.
-- Native support for MariaDB 10.x and 11.x.
-- Automatic server type detection (`mysql` vs `mariadb`) in `server_info` tool.
-- MariaDB 11.4 integration test target in `Makefile` and `docker-compose.test.yml`.
-- Robust Unicode support for MariaDB initialization scripts.
-
-## v1.5.0 - 2026-01-17
 
 ### Added
-- Architecture documentation with diagrams to explain system flows.
-- GitHub issue and PR templates to standardize contributions.
-- SSL/TLS configuration examples in config templates.
+- **`search_schema`**: Find tables and columns matching a pattern across all accessible databases.
+- **`schema_diff`**: Compare table and column structures between two databases.
+- **Column Masking**: Redact sensitive data in `run_query` results using **`MYSQL_MCP_MASK_COLUMNS`** (e.g., `email,password,token`).
+- **Reliability**: Exponential-backoff retries for transient MySQL/network errors (deadlocks, timeouts, connection loss).
+
+## [1.7.0-rc.3] - 2026-03-31
+
+Third release candidate: metrics HTTP sidecar for stdio MCP (Claude Desktop) and friendlier boolean env parsing.
+
+### Added
+
+- **`MYSQL_MCP_METRICS_HTTP`**: optional HTTP listener on **`MYSQL_HTTP_PORT`** while MCP uses **stdio** — **`GET /health`**, **`GET /api/metrics/tokens`**, **`GET /status`** in-process with the MCP server so token metrics match Claude Desktop usage ([#102](https://github.com/askdba/mysql-mcp-server/issues/102)).
+- **SSH tunneling (bastion host)**: connect to MySQL via `ssh_host`, `ssh_user`, `ssh_key_path`, and optional `ssh_port` (config file or `MYSQL_SSH_*` env vars). `key_path` supports `~` and `~/path` (expanded to user home). Bastion host key verification is not performed ([#79](https://github.com/askdba/mysql-mcp-server/issues/79)).
 
 ### Changed
-- Global SSL settings now apply to JSON connection definitions.
-- SSL "preferred" maps to "skip-verify" for Go MySQL driver compatibility.
-- Updated dependencies, including the MCP SDK.
 
-### Fixed
-- Linter warnings in tests (errorlint, staticcheck).
-- Error comparisons in tests now use errors.Is for wrapped errors.
-- SQL validator empty branch removed.
+- **`getEnvBool`**: treats **`true`**, **`yes`**, **`on`**, **`y`** as true (case-insensitive), not only **`1`**, for **`MYSQL_MCP_*`** and related flags.
+- **Full REST vs sidecar**: when **`MYSQL_MCP_HTTP=1`**, **`MetricsHTTP`** is cleared so the metrics-only listener does not run alongside the full HTTP API.
 
-### Tests
-- Improved unit test coverage for internal MySQL client.
-- Improved HTTP handler coverage for cmd/mysql-mcp-server.
+---
 
-### Documentation
-- Updated README for SSL/TLS behavior and configuration.
-- Corrected config file search paths in architecture docs.
-
-### Dependencies
-- github.com/modelcontextprotocol/go-sdk v1.1.0 -> v1.2.0
-- github.com/dlclark/regexp2 v1.10.0 -> v1.11.5
-- github.com/google/jsonschema-go v0.3.0 -> v0.4.2
-- golang.org/x/oauth2 v0.30.0 -> v0.34.0
+## [1.7.0-rc.2] - 2026-03-30
+... rest of the file ...

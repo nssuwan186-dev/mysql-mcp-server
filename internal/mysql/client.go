@@ -86,9 +86,14 @@ func New(cfg Config) (*Client, error) {
 		cfg.Retry.MaxInterval = 10 * time.Second
 	}
 
+	mr := cfg.MaxRows
+	if mr < 0 {
+		mr = 0
+	}
+
 	return &Client{
 		db:           db,
-		maxRows:      cfg.MaxRows,
+		maxRows:      mr,
 		queryTimeout: time.Duration(cfg.QueryTimeoutS) * time.Second,
 		retryCfg:     cfg.Retry,
 	}, nil
@@ -108,9 +113,14 @@ func NewWithDB(db *sql.DB, cfg Config) (*Client, error) {
 		cfg.Retry.MaxInterval = 10 * time.Second
 	}
 
+	mr := cfg.MaxRows
+	if mr < 0 {
+		mr = 0
+	}
+
 	return &Client{
 		db:           db,
-		maxRows:      cfg.MaxRows,
+		maxRows:      mr,
 		queryTimeout: time.Duration(cfg.QueryTimeoutS) * time.Second,
 		retryCfg:     cfg.Retry,
 	}, nil
@@ -312,6 +322,9 @@ func (c *Client) RunQuery(ctx context.Context, sqlText string, maxRows int) ([]m
 	}
 	if maxRows <= 0 || maxRows > c.maxRows {
 		maxRows = c.maxRows
+	}
+	if maxRows < 0 {
+		maxRows = 0
 	}
 
 	var result []map[string]any

@@ -71,7 +71,7 @@ integration:
 # Integration tests with Docker Compose
 test-integration: test-mysql-up
 	@echo "$(BLUE)🐋 Running full integration test suite...$(RESET)"
-	@MYSQL_TEST_DSN="root:testpass@tcp(localhost:3306)/testdb?parseTime=true" \
+	@MYSQL_TEST_DSN="mcpuser:mcppass00@tcp(127.0.0.1:13306)/testdb?parseTime=true" \
 		go test -tags=integration -v ./...; \
 		TEST_EXIT=$$?; \
 		docker compose -f docker-compose.test.yml down; \
@@ -79,7 +79,7 @@ test-integration: test-mysql-up
 
 test-integration-80: test-mysql-up
 	@echo "$(BLUE)🐋 Running integration tests against MySQL 8.0...$(RESET)"
-	@MYSQL_TEST_DSN="root:testpass@tcp(localhost:3306)/testdb?parseTime=true" \
+	@MYSQL_TEST_DSN="mcpuser:mcppass00@tcp(127.0.0.1:13306)/testdb?parseTime=true" \
 		go test -tags=integration -v ./tests/integration/...; \
 		TEST_EXIT=$$?; \
 		docker compose -f docker-compose.test.yml down; \
@@ -88,7 +88,7 @@ test-integration-80: test-mysql-up
 test-integration-84:
 	@echo "$(BLUE)🐋 Running integration tests against MySQL 8.4...$(RESET)"
 	@docker compose -f docker-compose.test.yml up -d --wait --wait-timeout 60 mysql84
-	@MYSQL_TEST_DSN="root:testpass@tcp(localhost:3307)/testdb?parseTime=true" \
+	@MYSQL_TEST_DSN="mcpuser:mcppass00@tcp(127.0.0.1:3307)/testdb?parseTime=true" \
 		go test -tags=integration -v ./tests/integration/...; \
 		TEST_EXIT=$$?; \
 		docker compose -f docker-compose.test.yml stop mysql84; \
@@ -97,7 +97,7 @@ test-integration-84:
 test-integration-90:
 	@echo "$(BLUE)🐋 Running integration tests against MySQL 9.0...$(RESET)"
 	@docker compose -f docker-compose.test.yml up -d --wait --wait-timeout 60 mysql90
-	@MYSQL_TEST_DSN="root:testpass@tcp(localhost:3308)/testdb?parseTime=true" \
+	@MYSQL_TEST_DSN="mcpuser:mcppass00@tcp(127.0.0.1:3308)/testdb?parseTime=true" \
 		go test -tags=integration -v ./tests/integration/...; \
 		TEST_EXIT=$$?; \
 		docker compose -f docker-compose.test.yml stop mysql90; \
@@ -114,7 +114,7 @@ test-integration-all:
 test-integration-mariadb-11:
 	@echo "$(BLUE)🐋 Running integration tests against MariaDB 11.4...$(RESET)"
 	@docker compose -f docker-compose.test.yml up -d --wait --wait-timeout 60 mariadb11
-	@MYSQL_TEST_DSN="root:testpass@tcp(localhost:3310)/testdb?parseTime=true&charset=utf8mb4" \
+	@MYSQL_TEST_DSN="mcpuser:mcppass00@tcp(127.0.0.1:3310)/testdb?parseTime=true&charset=utf8mb4" \
 		go test -tags=integration -v ./tests/integration/...; \
 		TEST_EXIT=$$?; \
 		docker compose -f docker-compose.test.yml stop mariadb11; \
@@ -125,9 +125,10 @@ test-integration-ssh:
 	@echo "$(BLUE)🔐 Running SSH tunnel integration test...$(RESET)"
 	@docker compose -f docker-compose.test.yml up -d --wait --wait-timeout 90 mysql80 ssh_bastion
 	@MYSQL_SSH_HOST=localhost MYSQL_SSH_PORT=2222 MYSQL_SSH_USER=root \
-		MYSQL_SSH_KEY_PATH="$$(pwd)/tests/integration/fixtures/ssh_test_key" \
-		MYSQL_SSH_TEST_DSN="root:testpass@tcp(mysql80:3306)/testdb?parseTime=true" \
+		MYSQL_SSH_KEY_PATH="$(pwd)/tests/integration/fixtures/ssh_test_key" \
+		MYSQL_SSH_TEST_DSN="mcpuser:mcppass00@tcp(mysql80:3306)/testdb?parseTime=true" \
 		go test -tags=integration -v -run TestSSHTunnel ./tests/integration/...; \
+
 		TEST_EXIT=$$?; \
 		docker compose -f docker-compose.test.yml stop ssh_bastion mysql80; \
 		exit $$TEST_EXIT
@@ -135,7 +136,7 @@ test-integration-ssh:
 # Sakila database integration tests
 test-sakila: test-mysql-up
 	@echo "$(BLUE)🎬 Running Sakila database integration tests...$(RESET)"
-	@MYSQL_TEST_DSN="root:testpass@tcp(localhost:3306)/sakila?parseTime=true&multiStatements=true" \
+	@MYSQL_TEST_DSN="mcpuser:mcppass00@tcp(127.0.0.1:13306)/sakila?parseTime=true&multiStatements=true" \
 		go test -tags=integration -v -run "Sakila" ./tests/integration/...; \
 		TEST_EXIT=$$?; \
 		docker compose -f docker-compose.test.yml down; \
@@ -144,7 +145,7 @@ test-sakila: test-mysql-up
 test-sakila-84:
 	@echo "$(BLUE)🎬 Running Sakila tests against MySQL 8.4...$(RESET)"
 	@docker compose -f docker-compose.test.yml up -d --wait --wait-timeout 90 mysql84
-	@MYSQL_TEST_DSN="root:testpass@tcp(localhost:3307)/sakila?parseTime=true&multiStatements=true" \
+	@MYSQL_TEST_DSN="mcpuser:mcppass00@tcp(127.0.0.1:3307)/sakila?parseTime=true&multiStatements=true" \
 		go test -tags=integration -v -run "Sakila" ./tests/integration/...; \
 		TEST_EXIT=$$?; \
 		docker compose -f docker-compose.test.yml stop mysql84; \
@@ -153,11 +154,23 @@ test-sakila-84:
 test-sakila-90:
 	@echo "$(BLUE)🎬 Running Sakila tests against MySQL 9.0...$(RESET)"
 	@docker compose -f docker-compose.test.yml up -d --wait --wait-timeout 90 mysql90
-	@MYSQL_TEST_DSN="root:testpass@tcp(localhost:3308)/sakila?parseTime=true&multiStatements=true" \
+	@MYSQL_TEST_DSN="mcpuser:mcppass00@tcp(127.0.0.1:3308)/sakila?parseTime=true&multiStatements=true" \
 		go test -tags=integration -v -run "Sakila" ./tests/integration/...; \
 		TEST_EXIT=$$?; \
 		docker compose -f docker-compose.test.yml stop mysql90; \
 		exit $$TEST_EXIT
+
+# Sakila tests against local MySQL (no Docker). Set MYSQL_TEST_DSN or MYSQL_SAKILA_DSN, e.g.:
+#   export MYSQL_TEST_DSN='user:pass@tcp(127.0.0.1:3306)/sakila?parseTime=true&multiStatements=true'
+#   make test-sakila-local
+test-sakila-local:
+	@if [ -z "$$MYSQL_TEST_DSN" ] && [ -z "$$MYSQL_SAKILA_DSN" ]; then \
+		echo "$(RED)Set MYSQL_TEST_DSN or MYSQL_SAKILA_DSN. Example for port 3306:$(RESET)"; \
+		echo "  export MYSQL_TEST_DSN='mcpuser:mcppass00@tcp(127.0.0.1:3306)/sakila?parseTime=true&multiStatements=true'"; \
+		exit 1; \
+	fi
+	@echo "$(BLUE)🎬 Running Sakila tests against local MySQL (DSN from env)...$(RESET)"
+	@go test -tags=integration -v -run "Sakila" ./tests/integration/...
 
 # Docker Compose helpers for test databases
 test-mysql-up:
@@ -287,6 +300,14 @@ qa-full: fmt-check vet lint security vuln test coverage
 	@echo "$(GREEN)✅ Full QA pipeline passed!$(RESET)"
 
 # ----------------------------------------
+# GitHub PR (requires gh CLI)
+# ----------------------------------------
+# Merge PR by number; always uses --merge for non-interactive use.
+pr-merge:
+	@if [ -z "$(PR)" ]; then echo "Usage: make pr-merge PR=<number>"; exit 1; fi
+	@gh pr merge $(PR) --merge
+
+# ----------------------------------------
 # Pre-commit Hook
 # ----------------------------------------
 
@@ -326,6 +347,7 @@ help:
 	@echo "  make test-integration-90  - Test against MySQL 9.0"
 	@echo "  make test-integration-all - Test against all MySQL versions"
 	@echo "  make test-sakila       - Run Sakila database tests (MySQL 8.0)"
+	@echo "  make test-sakila-local - Run Sakila tests vs local MySQL (set MYSQL_TEST_DSN; e.g. :3306)"
 	@echo "  make test-sakila-84    - Run Sakila tests against MySQL 8.4"
 	@echo "  make test-sakila-90    - Run Sakila tests against MySQL 9.0"
 	@echo "  make coverage          - Run tests with coverage report"
@@ -355,4 +377,7 @@ help:
 	@echo ""
 	@echo "$(CYAN)Dependencies:$(RESET)"
 	@echo "  make deps         - Download and tidy modules"
+	@echo ""
+	@echo "$(CYAN)GitHub (requires gh):$(RESET)"
+	@echo "  make pr-merge PR=n - Merge pull request n (e.g. make pr-merge PR=91)"
 	@echo ""

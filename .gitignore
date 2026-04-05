@@ -19,4 +19,10 @@ CODE_REVIEW.md
 *_review.md
 REVIEW*.md
 review*.md
-mysql-mcp-server
+
+# Local worktrees / stray clone dir at repo root (never commit)
+/.worktrees/
+/mysql-mcp-server
+
+# Local prerelease binary smoke-test download
+/.local-rc-test/

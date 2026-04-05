@@ -22,6 +22,9 @@ func toolListIndexes(
 	if input.Database == "" || input.Table == "" {
 		return nil, ListIndexesOutput{}, fmt.Errorf("database and table are required")
 	}
+	if err := requireAllowedDatabase(input.Database); err != nil {
+		return nil, ListIndexesOutput{}, err
+	}
 
 	dbName, err := util.QuoteIdent(input.Database)
 	if err != nil {
@@ -99,6 +102,9 @@ func toolShowCreateTable(
 	if input.Database == "" || input.Table == "" {
 		return nil, ShowCreateTableOutput{}, fmt.Errorf("database and table are required")
 	}
+	if err := requireAllowedDatabase(input.Database); err != nil {
+		return nil, ShowCreateTableOutput{}, err
+	}
 
 	dbName, err := util.QuoteIdent(input.Database)
 	if err != nil {
@@ -137,10 +143,22 @@ func toolExplainQuery(
 		return nil, ExplainQueryOutput{}, fmt.Errorf("only SELECT statements can be explained")
 	}
 
+	database := strings.TrimSpace(input.Database)
+	if accessControlEnabled() && database == "" {
+		return nil, ExplainQueryOutput{}, fmt.Errorf("database is required when MYSQL_MCP_ALLOWED_DATABASES is set")
+	}
+	if database != "" {
+		if err := requireAllowedDatabase(database); err != nil {
+			return nil, ExplainQueryOutput{}, err
+		}
+	}
+	if err := requireReferencedSchemasInQuery(sqlText); err != nil {
+		return nil, ExplainQueryOutput{}, err
+	}
+
 	ctx, cancel := context.WithTimeout(ctx, queryTimeout)
 	defer cancel()
 
-	database := strings.TrimSpace(input.Database)
 	explainSQL := "EXPLAIN " + sqlText
 	var rows *sql.Rows
 	var err error
@@ -191,7 +209,71 @@ func toolExplainQuery(
 		out.Plan = append(out.Plan, row)
 	}
 
+	out.Warnings = analyzeExplainPlan(out.Plan)
+
 	return nil, out, nil
+}
+
+// analyzeExplainPlan inspects a traditional EXPLAIN plan and returns actionable
+// optimization suggestions. It checks for full-table scans, unused indexes,
+// filesort, and temporary-table operations.
+func analyzeExplainPlan(plan []map[string]interface{}) []string {
+	var warnings []string
+
+	isNullLike := func(s string) bool {
+		return s == "" || s == "<nil>" || strings.EqualFold(s, "null")
+	}
+
+	for _, row := range plan {
+		table := fmt.Sprintf("%v", row["table"])
+		accessType := strings.ToUpper(fmt.Sprintf("%v", row["type"]))
+		// Missing type becomes "<NIL>" after fmt + ToUpper; do not treat as a known access type.
+		accessTypeKnown := accessType != "" && !strings.EqualFold(accessType, "<nil>")
+		key := fmt.Sprintf("%v", row["key"])
+		possibleKeys := fmt.Sprintf("%v", row["possible_keys"])
+		extra := strings.ToLower(fmt.Sprintf("%v", row["Extra"]))
+
+		// Full table scan
+		if accessType == "ALL" {
+			if isNullLike(possibleKeys) {
+				warnings = append(warnings, fmt.Sprintf(
+					"Table '%s': full table scan with no candidate indexes — consider adding an index on the columns used in WHERE/JOIN conditions.",
+					table,
+				))
+			} else {
+				warnings = append(warnings, fmt.Sprintf(
+					"Table '%s': full table scan despite candidate indexes (%s) — verify the WHERE clause matches the index prefix and that column types align.",
+					table, possibleKeys,
+				))
+			}
+		}
+
+		// Index available but not used (requires a known non-ALL access type)
+		if isNullLike(key) && !isNullLike(possibleKeys) && accessType != "ALL" && accessTypeKnown {
+			warnings = append(warnings, fmt.Sprintf(
+				"Table '%s': indexes (%s) are available but none were chosen — check for type mismatches or functions wrapping indexed columns.",
+				table, possibleKeys,
+			))
+		}
+
+		// Filesort
+		if strings.Contains(extra, "using filesort") {
+			warnings = append(warnings, fmt.Sprintf(
+				"Table '%s': filesort required — consider a composite index whose column order matches your ORDER BY clause.",
+				table,
+			))
+		}
+
+		// Temporary table
+		if strings.Contains(extra, "using temporary") {
+			warnings = append(warnings, fmt.Sprintf(
+				"Table '%s': temporary table created — consider an index covering the columns used in GROUP BY or DISTINCT.",
+				table,
+			))
+		}
+	}
+
+	return warnings
 }
 
 func toolListViews(
@@ -201,6 +283,9 @@ func toolListViews(
 ) (*mcp.CallToolResult, ListViewsOutput, error) {
 	if input.Database == "" {
 		return nil, ListViewsOutput{}, fmt.Errorf("database is required")
+	}
+	if err := requireAllowedDatabase(input.Database); err != nil {
+		return nil, ListViewsOutput{}, err
 	}
 
 	ctx, cancel := context.WithTimeout(ctx, queryTimeout)
@@ -240,6 +325,9 @@ func toolListTriggers(
 	if input.Database == "" {
 		return nil, ListTriggersOutput{}, fmt.Errorf("database is required")
 	}
+	if err := requireAllowedDatabase(input.Database); err != nil {
+		return nil, ListTriggersOutput{}, err
+	}
 
 	ctx, cancel := context.WithTimeout(ctx, queryTimeout)
 	defer cancel()
@@ -277,6 +365,9 @@ func toolListProcedures(
 ) (*mcp.CallToolResult, ListProceduresOutput, error) {
 	if input.Database == "" {
 		return nil, ListProceduresOutput{}, fmt.Errorf("database is required")
+	}
+	if err := requireAllowedDatabase(input.Database); err != nil {
+		return nil, ListProceduresOutput{}, err
 	}
 
 	ctx, cancel := context.WithTimeout(ctx, queryTimeout)
@@ -317,6 +408,9 @@ func toolListFunctions(
 	if input.Database == "" {
 		return nil, ListFunctionsOutput{}, fmt.Errorf("database is required")
 	}
+	if err := requireAllowedDatabase(input.Database); err != nil {
+		return nil, ListFunctionsOutput{}, err
+	}
 
 	ctx, cancel := context.WithTimeout(ctx, queryTimeout)
 	defer cancel()
@@ -355,6 +449,9 @@ func toolListPartitions(
 ) (*mcp.CallToolResult, ListPartitionsOutput, error) {
 	if input.Database == "" || input.Table == "" {
 		return nil, ListPartitionsOutput{}, fmt.Errorf("database and table are required")
+	}
+	if err := requireAllowedDatabase(input.Database); err != nil {
+		return nil, ListPartitionsOutput{}, err
 	}
 
 	ctx, cancel := context.WithTimeout(ctx, queryTimeout)
@@ -398,6 +495,13 @@ func toolDatabaseSize(
 	req *mcp.CallToolRequest,
 	input DatabaseSizeInput,
 ) (*mcp.CallToolResult, DatabaseSizeOutput, error) {
+	database := strings.TrimSpace(input.Database)
+	if database != "" {
+		if err := requireAllowedDatabase(database); err != nil {
+			return nil, DatabaseSizeOutput{}, err
+		}
+	}
+
 	ctx, cancel := context.WithTimeout(ctx, queryTimeout)
 	defer cancel()
 
@@ -409,7 +513,7 @@ func toolDatabaseSize(
 		COUNT(*) as tables
 		FROM information_schema.TABLES`
 
-	if input.Database != "" {
+	if database != "" {
 		query += " WHERE TABLE_SCHEMA = ?"
 	} else {
 		query += " WHERE TABLE_SCHEMA NOT IN ('information_schema', 'performance_schema', 'mysql', 'sys')"
@@ -418,8 +522,8 @@ func toolDatabaseSize(
 
 	var rows *sql.Rows
 	var err error
-	if input.Database != "" {
-		rows, err = getDB().QueryContext(ctx, query, input.Database)
+	if database != "" {
+		rows, err = getDB().QueryContext(ctx, query, database)
 	} else {
 		rows, err = getDB().QueryContext(ctx, query)
 	}
@@ -432,6 +536,9 @@ func toolDatabaseSize(
 	for rows.Next() {
 		var d DatabaseSizeInfo
 		if err := rows.Scan(&d.Name, &d.SizeMB, &d.DataMB, &d.IndexMB, &d.Tables); err != nil {
+			continue
+		}
+		if accessControlEnabled() && !databaseAllowed(d.Name) {
 			continue
 		}
 		out.Databases = append(out.Databases, d)
@@ -453,6 +560,9 @@ func toolTableSize(
 ) (*mcp.CallToolResult, TableSizeOutput, error) {
 	if input.Database == "" {
 		return nil, TableSizeOutput{}, fmt.Errorf("database is required")
+	}
+	if err := requireAllowedDatabase(input.Database); err != nil {
+		return nil, TableSizeOutput{}, err
 	}
 
 	ctx, cancel := context.WithTimeout(ctx, queryTimeout)
@@ -515,6 +625,9 @@ func toolForeignKeys(
 	if input.Database == "" {
 		return nil, ForeignKeysOutput{}, fmt.Errorf("database is required")
 	}
+	if err := requireAllowedDatabase(input.Database); err != nil {
+		return nil, ForeignKeysOutput{}, err
+	}
 
 	ctx, cancel := context.WithTimeout(ctx, queryTimeout)
 	defer cancel()
@@ -572,20 +685,28 @@ func toolListStatus(
 	ctx, cancel := context.WithTimeout(ctx, queryTimeout)
 	defer cancel()
 
-	query := "SHOW GLOBAL STATUS"
-	if input.Pattern != "" {
-		query += " LIKE ?"
-	}
-
 	var rows *sql.Rows
 	var err error
+
+	// Use performance_schema for better performance and flexibility
 	if input.Pattern != "" {
-		rows, err = getDB().QueryContext(ctx, query, input.Pattern)
+		rows, err = getDB().QueryContext(ctx,
+			"SELECT VARIABLE_NAME, VARIABLE_VALUE FROM performance_schema.global_status WHERE VARIABLE_NAME LIKE ? ORDER BY VARIABLE_NAME",
+			input.Pattern)
 	} else {
-		rows, err = getDB().QueryContext(ctx, query)
+		rows, err = getDB().QueryContext(ctx,
+			"SELECT VARIABLE_NAME, VARIABLE_VALUE FROM performance_schema.global_status ORDER BY VARIABLE_NAME")
 	}
 	if err != nil {
-		return nil, ListStatusOutput{}, fmt.Errorf("SHOW STATUS failed: %w", err)
+		// Fallback to SHOW GLOBAL STATUS for restricted environments or older versions
+		if input.Pattern != "" {
+			rows, err = getDB().QueryContext(ctx, "SHOW GLOBAL STATUS LIKE ?", input.Pattern)
+		} else {
+			rows, err = getDB().QueryContext(ctx, "SHOW GLOBAL STATUS")
+		}
+		if err != nil {
+			return nil, ListStatusOutput{}, fmt.Errorf("query status failed: %w", err)
+		}
 	}
 	defer rows.Close()
 
@@ -615,20 +736,29 @@ func toolListVariables(
 	ctx, cancel := context.WithTimeout(ctx, queryTimeout)
 	defer cancel()
 
-	query := "SHOW GLOBAL VARIABLES"
-	if input.Pattern != "" {
-		query += " LIKE ?"
-	}
-
 	var rows *sql.Rows
 	var err error
+
+	// Prefer SHOW GLOBAL VARIABLES first: it is the most compatible path across managed
+	// MySQL/MariaDB deployments. Some environments stall when selecting from
+	// performance_schema.global_variables; use that only as a fallback.
 	if input.Pattern != "" {
-		rows, err = getDB().QueryContext(ctx, query, input.Pattern)
+		rows, err = getDB().QueryContext(ctx, "SHOW GLOBAL VARIABLES LIKE ?", input.Pattern)
 	} else {
-		rows, err = getDB().QueryContext(ctx, query)
+		rows, err = getDB().QueryContext(ctx, "SHOW GLOBAL VARIABLES")
 	}
 	if err != nil {
-		return nil, ListVariablesOutput{}, fmt.Errorf("SHOW VARIABLES failed: %w", err)
+		if input.Pattern != "" {
+			rows, err = getDB().QueryContext(ctx,
+				"SELECT VARIABLE_NAME, VARIABLE_VALUE FROM performance_schema.global_variables WHERE VARIABLE_NAME LIKE ? ORDER BY VARIABLE_NAME",
+				input.Pattern)
+		} else {
+			rows, err = getDB().QueryContext(ctx,
+				"SELECT VARIABLE_NAME, VARIABLE_VALUE FROM performance_schema.global_variables ORDER BY VARIABLE_NAME")
+		}
+		if err != nil {
+			return nil, ListVariablesOutput{}, fmt.Errorf("query variables failed: %w", err)
+		}
 	}
 	defer rows.Close()
 
@@ -891,6 +1021,9 @@ func toolVectorSearch(
 	if input.Database == "" || input.Table == "" || input.Column == "" {
 		return nil, VectorSearchOutput{}, fmt.Errorf("database, table, and column are required")
 	}
+	if err := requireAllowedDatabase(input.Database); err != nil {
+		return nil, VectorSearchOutput{}, err
+	}
 	if len(input.Query) == 0 {
 		return nil, VectorSearchOutput{}, fmt.Errorf("query vector is required")
 	}
@@ -1014,6 +1147,9 @@ func toolVectorInfo(
 ) (*mcp.CallToolResult, VectorInfoOutput, error) {
 	if input.Database == "" {
 		return nil, VectorInfoOutput{}, fmt.Errorf("database is required")
+	}
+	if err := requireAllowedDatabase(input.Database); err != nil {
+		return nil, VectorInfoOutput{}, err
 	}
 
 	ctx, cancel := context.WithTimeout(ctx, queryTimeout)

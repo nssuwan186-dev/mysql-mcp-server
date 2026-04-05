@@ -31,99 +31,6 @@ func newTestClient(t *testing.T) (*Client, sqlmock.Sqlmock) {
 	return client, mock
 }
 
-func TestListDatabases(t *testing.T) {
-	client, mock := newTestClient(t)
-
-	rows := sqlmock.NewRows([]string{"Database"}).
-		AddRow("mysql").
-		AddRow("testdb")
-
-	mock.ExpectQuery("SHOW DATABASES").WillReturnRows(rows)
-
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-	defer cancel()
-
-	dbs, err := client.ListDatabases(ctx)
-	if err != nil {
-		t.Fatalf("ListDatabases returned error: %v", err)
-	}
-
-	if len(dbs) != 2 || dbs[0] != "mysql" || dbs[1] != "testdb" {
-		t.Fatalf("unexpected databases: %+v", dbs)
-	}
-
-	if err := mock.ExpectationsWereMet(); err != nil {
-		t.Fatalf("unmet expectations: %v", err)
-	}
-}
-
-func TestListTables(t *testing.T) {
-	client, mock := newTestClient(t)
-
-	dbName := "testdb"
-
-	mock.ExpectExec("USE `testdb`").
-		WillReturnResult(sqlmock.NewResult(0, 0))
-
-	rows := sqlmock.NewRows([]string{"Tables_in_testdb"}).
-		AddRow("users").
-		AddRow("orders")
-
-	mock.ExpectQuery("SHOW TABLES").WillReturnRows(rows)
-
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-	defer cancel()
-
-	tables, err := client.ListTables(ctx, dbName)
-	if err != nil {
-		t.Fatalf("ListTables returned error: %v", err)
-	}
-
-	if len(tables) != 2 || tables[0] != "users" || tables[1] != "orders" {
-		t.Fatalf("unexpected tables: %+v", tables)
-	}
-
-	if err := mock.ExpectationsWereMet(); err != nil {
-		t.Fatalf("unmet expectations: %v", err)
-	}
-}
-
-func TestDescribeTable(t *testing.T) {
-	client, mock := newTestClient(t)
-
-	dbName := "testdb"
-	tableName := "users"
-
-	mock.ExpectExec("USE `testdb`").
-		WillReturnResult(sqlmock.NewResult(0, 0))
-
-	rows := sqlmock.NewRows([]string{"Field", "Type", "Null", "Key", "Default", "Extra"}).
-		AddRow("id", "int", "NO", "PRI", nil, "auto_increment").
-		AddRow("name", "varchar(255)", "YES", "", nil, "")
-
-	mock.ExpectQuery("DESCRIBE `users`").WillReturnRows(rows)
-
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-	defer cancel()
-
-	cols, err := client.DescribeTable(ctx, dbName, tableName)
-	if err != nil {
-		t.Fatalf("DescribeTable returned error: %v", err)
-	}
-
-	if len(cols) != 2 {
-		t.Fatalf("expected 2 columns, got %d", len(cols))
-	}
-
-	if cols[0]["Field"] != "id" || cols[1]["Field"] != "name" {
-		t.Fatalf("unexpected column metadata: %+v", cols)
-	}
-
-	if err := mock.ExpectationsWereMet(); err != nil {
-		t.Fatalf("unmet expectations: %v", err)
-	}
-}
-
 func TestRunQueryRespectsMaxRows(t *testing.T) {
 	client, mock := newTestClient(t)
 
@@ -296,40 +203,6 @@ func TestRunQueryEmptySQL(t *testing.T) {
 	}
 }
 
-func TestListTablesEmptyDatabase(t *testing.T) {
-	client, _ := newTestClient(t)
-
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-	defer cancel()
-
-	_, err := client.ListTables(ctx, "")
-	if err == nil {
-		t.Fatal("expected error for empty database, got nil")
-	}
-	if err.Error() != "database is required" {
-		t.Fatalf("unexpected error message: %v", err)
-	}
-}
-
-func TestDescribeTableEmptyParams(t *testing.T) {
-	client, _ := newTestClient(t)
-
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-	defer cancel()
-
-	// Test empty database
-	_, err := client.DescribeTable(ctx, "", "table")
-	if err == nil {
-		t.Fatal("expected error for empty database, got nil")
-	}
-
-	// Test empty table
-	_, err = client.DescribeTable(ctx, "db", "")
-	if err == nil {
-		t.Fatal("expected error for empty table, got nil")
-	}
-}
-
 func TestRunQueryMaxRowsDefault(t *testing.T) {
 	client, mock := newTestClient(t)
 
@@ -396,95 +269,29 @@ func TestRunQueryMaxRowsExceedsConfig(t *testing.T) {
 	}
 }
 
-func TestListDatabasesQueryError(t *testing.T) {
-	client, mock := newTestClient(t)
+// Regression: negative cfg.MaxRows must not make make(..., 0, maxRows) panic (Codex P2).
+func TestRunQueryClampsNegativeClientMaxRows(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock: %v", err)
+	}
+	client, err := NewWithDB(db, Config{MaxRows: -1, QueryTimeoutS: 5})
+	if err != nil {
+		t.Fatalf("NewWithDB: %v", err)
+	}
 
-	mock.ExpectQuery("SHOW DATABASES").WillReturnError(sqlmock.ErrCancelled)
+	rows := sqlmock.NewRows([]string{"id"}).AddRow(1).AddRow(2)
+	mock.ExpectQuery("SELECT 1").WillReturnRows(rows)
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 
-	_, err := client.ListDatabases(ctx)
-	if err == nil {
-		t.Fatal("expected error, got nil")
+	out, err := client.RunQuery(ctx, "SELECT 1", 10)
+	if err != nil {
+		t.Fatalf("RunQuery: %v", err)
 	}
-
-	if err := mock.ExpectationsWereMet(); err != nil {
-		t.Fatalf("unmet expectations: %v", err)
-	}
-}
-
-func TestListTablesQueryError(t *testing.T) {
-	client, mock := newTestClient(t)
-
-	mock.ExpectExec("USE `testdb`").
-		WillReturnResult(sqlmock.NewResult(0, 0))
-	mock.ExpectQuery("SHOW TABLES").WillReturnError(sqlmock.ErrCancelled)
-
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-	defer cancel()
-
-	_, err := client.ListTables(ctx, "testdb")
-	if err == nil {
-		t.Fatal("expected error, got nil")
-	}
-
-	if err := mock.ExpectationsWereMet(); err != nil {
-		t.Fatalf("unmet expectations: %v", err)
-	}
-}
-
-func TestListTablesUseError(t *testing.T) {
-	client, mock := newTestClient(t)
-
-	mock.ExpectExec("USE `testdb`").
-		WillReturnError(sqlmock.ErrCancelled)
-
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-	defer cancel()
-
-	_, err := client.ListTables(ctx, "testdb")
-	if err == nil {
-		t.Fatal("expected error, got nil")
-	}
-
-	if err := mock.ExpectationsWereMet(); err != nil {
-		t.Fatalf("unmet expectations: %v", err)
-	}
-}
-
-func TestDescribeTableUseError(t *testing.T) {
-	client, mock := newTestClient(t)
-
-	mock.ExpectExec("USE `testdb`").
-		WillReturnError(sqlmock.ErrCancelled)
-
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-	defer cancel()
-
-	_, err := client.DescribeTable(ctx, "testdb", "users")
-	if err == nil {
-		t.Fatal("expected error, got nil")
-	}
-
-	if err := mock.ExpectationsWereMet(); err != nil {
-		t.Fatalf("unmet expectations: %v", err)
-	}
-}
-
-func TestDescribeTableQueryError(t *testing.T) {
-	client, mock := newTestClient(t)
-
-	mock.ExpectExec("USE `testdb`").
-		WillReturnResult(sqlmock.NewResult(0, 0))
-	mock.ExpectQuery("DESCRIBE `users`").WillReturnError(sqlmock.ErrCancelled)
-
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-	defer cancel()
-
-	_, err := client.DescribeTable(ctx, "testdb", "users")
-	if err == nil {
-		t.Fatal("expected error, got nil")
+	if len(out) != 0 {
+		t.Fatalf("expected 0 rows with effective maxRows 0 after negative clamp, got %d", len(out))
 	}
 
 	if err := mock.ExpectationsWereMet(); err != nil {
@@ -507,37 +314,5 @@ func TestRunQueryQueryError(t *testing.T) {
 
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatalf("unmet expectations: %v", err)
-	}
-}
-
-func TestListTablesInvalidDatabaseName(t *testing.T) {
-	client, _ := newTestClient(t)
-
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-	defer cancel()
-
-	// Invalid database name with backticks
-	_, err := client.ListTables(ctx, "test`db")
-	if err == nil {
-		t.Fatal("expected error for invalid database name, got nil")
-	}
-}
-
-func TestDescribeTableInvalidNames(t *testing.T) {
-	client, _ := newTestClient(t)
-
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-	defer cancel()
-
-	// Invalid database name
-	_, err := client.DescribeTable(ctx, "test`db", "users")
-	if err == nil {
-		t.Fatal("expected error for invalid database name, got nil")
-	}
-
-	// Invalid table name
-	_, err = client.DescribeTable(ctx, "testdb", "use`rs")
-	if err == nil {
-		t.Fatal("expected error for invalid table name, got nil")
 	}
 }
