@@ -54,22 +54,18 @@ Optional locally: `golangci-lint run --timeout=5m` if you have it installed (sam
 
 ## Open backlog snapshot
 
-**Snapshot date: 2026-04-05.** Refresh with `gh issue list --state open` (or the GitHub UI). This table is a **working snapshot** for agents and contributors, not an automated export.
+**Snapshot date: 2026-04-05** (refreshed after closing delivered items). Regenerate with `gh issue list --state open` (or the GitHub UI). This table is a **working snapshot** for agents and contributors, not an automated export.
 
 | # | Title |
 |---|--------|
-| 120 | Feature: search_schema — find tables/columns by name pattern across a catalog |
-| 119 | Feature: schema diff — compare two databases or two schema snapshots |
-| 117 | Feature: MYSQL_MCP_MASK_COLUMNS — redact sensitive columns in tool outputs |
 | 106 | Feature: add_connection — register a new named DSN at runtime (no restart) |
 | 104 | Enhancement: richer EXPLAIN as structured output (document existing explain_query) |
 | 103 | Feature: write_query tool with explicit confirmation for INSERT/UPDATE/DELETE |
-| 102 | v1.7.0-rc.3: MYSQL_MCP_METRICS_HTTP sidecar + getEnvBool |
 | 80 | [Feature]: Natural Language to SQL tool (ask_nl_sql) |
 | 64 | Add support for local LLMs (Ollama, LM Studio, llama.cpp) |
 | 24 | Add TiDB compatibility support |
 
-**Reliability bundle (confirm closed in tracker):** #110 (retries / reconnect), #111 (docs / env), #121 (offset pagination)—verify status on GitHub before assuming they are still open.
+**Recently delivered (closed):** #102 (metrics HTTP sidecar), #117 (column masking), #119 (`schema_diff`), #120 (`search_schema`), #110 / #111 / #121 (retries, pagination, pool ping)—all on `main` as of PRs **#122**–**#124**.
 
 ## AI-specific notes
 
