@@ -538,10 +538,8 @@ func toolPing(
 
 	start := NewQueryTimer("ping")
 	db := getDB()
-	var err error
-	_ = dbretry.Do(ctx, db, dbRetryCfg, pingTimeout, func() error {
-		err = db.PingContext(ctx)
-		return err
+	err := dbretry.Do(ctx, db, dbRetryCfg, pingTimeout, func() error {
+		return db.PingContext(ctx)
 	})
 	latency := start.ElapsedMs()
 
