@@ -472,7 +472,7 @@ func toolRunQuery(
 
 	// Apply column masking if configured
 	if cfg != nil && len(cfg.MaskColumns) > 0 {
-		maskResults(result.Columns, result.Rows, cfg.MaskColumns)
+		maskResults(out.Columns, out.Rows, cfg.MaskColumns)
 	}
 
 	// Token estimation for output (optional)

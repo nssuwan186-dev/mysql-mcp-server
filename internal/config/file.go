@@ -40,17 +40,10 @@ type FileConfig struct {
 
 // FileConnectionConfig represents a connection in the config file.
 type FileConnectionConfig struct {
-<<<<<<< HEAD
-	DSN         string      `yaml:"dsn" json:"dsn"`
-	Description string      `yaml:"description" json:"description"`
-	ReadOnly    bool        `yaml:"read_only" json:"read_only"`
-	SSL         string      `yaml:"ssl" json:"ssl"`   // "true", "false", "skip-verify", or empty
-=======
 	DSN         string         `yaml:"dsn" json:"dsn"`
 	Description string         `yaml:"description" json:"description"`
 	ReadOnly    bool           `yaml:"read_only" json:"read_only"`
-	SSL         string         `yaml:"ssl" json:"ssl"` // "true", "false", "skip-verify", or empty
->>>>>>> origin/main
+	SSL         string         `yaml:"ssl" json:"ssl"`   // "true", "false", "skip-verify", or empty
 	SSH         *FileSSHConfig `yaml:"ssh" json:"ssh"` // optional SSH tunnel (bastion)
 }
 
