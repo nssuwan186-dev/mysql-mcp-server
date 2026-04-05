@@ -5,10 +5,10 @@ RUN apk add --no-cache openssh-server openssh-client \
     && mkdir -p /root/.ssh \
     && chmod 0700 /root/.ssh
 
-# Generate deterministic ed25519 host key at build time instead of hardcoding
+# Generate ed25519 host key at build time (a new random key each image build, not deterministic).
 RUN ssh-keygen -t ed25519 -f /etc/ssh/ssh_host_ed25519_key -N ""
 
-# RSA/ECDSA for sshd defaults (ed25519 is fixed above; -A only creates missing types).
+# RSA/ECDSA host keys for sshd defaults (ed25519 above; -A creates any still-missing types).
 RUN ssh-keygen -A
 
 # Create empty authorized_keys to be populated at runtime
