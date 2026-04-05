@@ -139,7 +139,7 @@ func (c *Client) execWithRetry(ctx context.Context, op func(context.Context) err
 	bo.MaxInterval = c.retryCfg.MaxInterval
 	// Disable MaxElapsedTime since we rely on MaxRetries
 	bo.MaxElapsedTime = 0
-	
+
 	b := backoff.WithMaxRetries(bo, uint64(c.retryCfg.MaxRetries))
 
 	return backoff.Retry(func() error {

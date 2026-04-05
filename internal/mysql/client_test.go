@@ -91,7 +91,7 @@ func TestRunQueryWithRetry(t *testing.T) {
 
 	// First call fails with a transient error
 	mock.ExpectQuery(sqlText).WillReturnError(&mysql.MySQLError{Number: 2006, Message: "MySQL server has gone away"})
-	
+
 	// Second call succeeds
 	rows := sqlmock.NewRows([]string{"id"}).AddRow(1)
 	mock.ExpectQuery(sqlText).WillReturnRows(rows)

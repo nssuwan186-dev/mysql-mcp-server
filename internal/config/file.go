@@ -43,7 +43,7 @@ type FileConnectionConfig struct {
 	DSN         string         `yaml:"dsn" json:"dsn"`
 	Description string         `yaml:"description" json:"description"`
 	ReadOnly    bool           `yaml:"read_only" json:"read_only"`
-	SSL         string         `yaml:"ssl" json:"ssl"`   // "true", "false", "skip-verify", or empty
+	SSL         string         `yaml:"ssl" json:"ssl"` // "true", "false", "skip-verify", or empty
 	SSH         *FileSSHConfig `yaml:"ssh" json:"ssh"` // optional SSH tunnel (bastion)
 }
 

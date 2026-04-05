@@ -925,8 +925,8 @@ func toolSchemaDiff(
 	for name := range sourceTables {
 		if !targetTables[name] {
 			out.Diffs = append(out.Diffs, DiffResult{
-				Table:  name,
-				Status: "MISSING",
+				Table:   name,
+				Status:  "MISSING",
 				Details: fmt.Sprintf("Table exists in %s but missing in %s", input.SourceDatabase, input.TargetDatabase),
 			})
 		}
@@ -935,8 +935,8 @@ func toolSchemaDiff(
 	for name := range targetTables {
 		if !sourceTables[name] {
 			out.Diffs = append(out.Diffs, DiffResult{
-				Table:  name,
-				Status: "EXTRA",
+				Table:   name,
+				Status:  "EXTRA",
 				Details: fmt.Sprintf("Table exists in %s but missing in %s", input.TargetDatabase, input.SourceDatabase),
 			})
 		} else {

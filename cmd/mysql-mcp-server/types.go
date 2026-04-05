@@ -86,26 +86,26 @@ type ServerHealthSnapshot struct {
 
 // ServerTokenSnapshot summarizes token metrics when MYSQL_MCP_TOKEN_TRACKING=1.
 type ServerTokenSnapshot struct {
-	ToolCalls        int `json:"tool_calls,omitempty"`
-	TotalInputTokens int `json:"total_input_tokens,omitempty"`
+	ToolCalls         int `json:"tool_calls,omitempty"`
+	TotalInputTokens  int `json:"total_input_tokens,omitempty"`
 	TotalOutputTokens int `json:"total_output_tokens,omitempty"`
-	TotalTokens      int `json:"total_tokens,omitempty"`
-	MetricsUptimeSec int `json:"metrics_uptime_seconds,omitempty"`
+	TotalTokens       int `json:"total_tokens,omitempty"`
+	MetricsUptimeSec  int `json:"metrics_uptime_seconds,omitempty"`
 }
 
 type ServerInfoOutput struct {
-	Version          string `json:"version" jsonschema:"MySQL server version"`
-	ServerEngine     string `json:"server_engine" jsonschema:"Server engine (mysql or mariadb)"`
-	VersionComment   string `json:"version_comment" jsonschema:"MySQL version comment (e.g., MySQL Community Server)"`
-	Uptime           int64  `json:"uptime_seconds" jsonschema:"server uptime in seconds"`
-	CurrentDatabase  string `json:"current_database" jsonschema:"currently selected database, if any"`
-	CurrentUser      string `json:"current_user" jsonschema:"current MySQL user"`
-	CharacterSet     string `json:"character_set" jsonschema:"server character set"`
-	Collation        string `json:"collation" jsonschema:"server collation"`
-	MaxConnections   int    `json:"max_connections" jsonschema:"maximum allowed connections"`
-	ThreadsConnected int    `json:"threads_connected" jsonschema:"current number of connected threads"`
+	Version          string                `json:"version" jsonschema:"MySQL server version"`
+	ServerEngine     string                `json:"server_engine" jsonschema:"Server engine (mysql or mariadb)"`
+	VersionComment   string                `json:"version_comment" jsonschema:"MySQL version comment (e.g., MySQL Community Server)"`
+	Uptime           int64                 `json:"uptime_seconds" jsonschema:"server uptime in seconds"`
+	CurrentDatabase  string                `json:"current_database" jsonschema:"currently selected database, if any"`
+	CurrentUser      string                `json:"current_user" jsonschema:"current MySQL user"`
+	CharacterSet     string                `json:"character_set" jsonschema:"server character set"`
+	Collation        string                `json:"collation" jsonschema:"server collation"`
+	MaxConnections   int                   `json:"max_connections" jsonschema:"maximum allowed connections"`
+	ThreadsConnected int                   `json:"threads_connected" jsonschema:"current number of connected threads"`
 	Health           *ServerHealthSnapshot `json:"health,omitempty" jsonschema:"present when detailed=true"`
-	TokenMetrics     *ServerTokenSnapshot   `json:"token_metrics,omitempty" jsonschema:"present when token tracking is enabled"`
+	TokenMetrics     *ServerTokenSnapshot  `json:"token_metrics,omitempty" jsonschema:"present when token tracking is enabled"`
 }
 
 // ===== Multi-DSN Tool Types =====
@@ -140,14 +140,14 @@ type UseConnectionOutput struct {
 type ProcessListInput struct{}
 
 type ProcessRow struct {
-	ID      int64          `json:"id" jsonschema:"connection / thread id"`
-	User    string         `json:"user" jsonschema:"user@host"`
-	Host    string         `json:"host" jsonschema:"client host"`
-	DB      string         `json:"db,omitempty" jsonschema:"default database"`
-	Command string         `json:"command" jsonschema:"thread command"`
-	Time    int            `json:"time" jsonschema:"seconds in current state"`
-	State   string         `json:"state,omitempty"`
-	Info    string         `json:"info,omitempty" jsonschema:"statement (truncated)"`
+	ID      int64  `json:"id" jsonschema:"connection / thread id"`
+	User    string `json:"user" jsonschema:"user@host"`
+	Host    string `json:"host" jsonschema:"client host"`
+	DB      string `json:"db,omitempty" jsonschema:"default database"`
+	Command string `json:"command" jsonschema:"thread command"`
+	Time    int    `json:"time" jsonschema:"seconds in current state"`
+	State   string `json:"state,omitempty"`
+	Info    string `json:"info,omitempty" jsonschema:"statement (truncated)"`
 }
 
 type ProcessListOutput struct {
@@ -169,9 +169,9 @@ type ReadAuditLogInput struct {
 }
 
 type ReadAuditLogOutput struct {
-	Path   string   `json:"path" jsonschema:"audit file path"`
-	Lines  []string `json:"lines" jsonschema:"recent log lines (JSON entries)"`
-	Truncated bool `json:"truncated,omitempty" jsonschema:"true if byte limit hit before reading full tail"`
+	Path      string   `json:"path" jsonschema:"audit file path"`
+	Lines     []string `json:"lines" jsonschema:"recent log lines (JSON entries)"`
+	Truncated bool     `json:"truncated,omitempty" jsonschema:"true if byte limit hit before reading full tail"`
 }
 
 type SlowQueryLogInput struct {
