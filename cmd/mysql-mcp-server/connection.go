@@ -89,9 +89,25 @@ func applyStrictReadOnlyDSN(dsn string, strict bool) (string, error) {
 }
 
 // AddConnectionWithPoolConfig adds a new connection with pool configuration.
+// If a connection with the same name already exists, it and its SSH tunnel (if any) are closed and replaced.
 func (cm *ConnectionManager) AddConnectionWithPoolConfig(connCfg config.ConnectionConfig, cfg *config.Config) error {
 	cm.mu.Lock()
 	defer cm.mu.Unlock()
+
+	// If replacing an existing connection, close it and its tunnel first to avoid leaks
+	if existing, ok := cm.connections[connCfg.Name]; ok {
+		existing.Close()
+		delete(cm.connections, connCfg.Name)
+		delete(cm.configs, connCfg.Name)
+		delete(cm.serverTypes, connCfg.Name)
+		if closeTunnel := cm.tunnelClosers[connCfg.Name]; closeTunnel != nil {
+			closeTunnel()
+			delete(cm.tunnelClosers, connCfg.Name)
+		}
+		if cm.activeConn == connCfg.Name {
+			cm.activeConn = ""
+		}
+	}
 
 	dsn := config.ApplySSLToDSN(connCfg.DSN, connCfg.SSL)
 	var err error
@@ -114,11 +130,15 @@ func (cm *ConnectionManager) AddConnectionWithPoolConfig(connCfg config.Connecti
 		if remoteAddr == "" {
 			remoteAddr = "127.0.0.1:3306"
 		}
+		strict := config.EffectiveStrictSSHHostKeyChecking(connCfg.SSH)
 		tunnelCfg := sshtunnel.Config{
-			Host:    connCfg.SSH.Host,
-			User:    connCfg.SSH.User,
-			KeyPath: connCfg.SSH.KeyPath,
-			Port:    connCfg.SSH.Port,
+			Host:                  connCfg.SSH.Host,
+			User:                  connCfg.SSH.User,
+			KeyPath:               connCfg.SSH.KeyPath,
+			Port:                  connCfg.SSH.Port,
+			InsecureIgnoreHostKey: !strict,
+			KnownHostsPath:        connCfg.SSH.KnownHostsPath,
+			HostKeyFingerprint:    connCfg.SSH.HostKeyFingerprint,
 		}
 		localAddr, closeTunnel, err := sshtunnel.Tunnel(tunnelCfg, remoteAddr)
 		if err != nil {
@@ -170,6 +190,10 @@ func (cm *ConnectionManager) AddConnectionWithPoolConfig(connCfg config.Connecti
 	defer cancel()
 	if err := conn.PingContext(ctx); err != nil {
 		conn.Close()
+		if closer := cm.tunnelClosers[connCfg.Name]; closer != nil {
+			closer()
+			delete(cm.tunnelClosers, connCfg.Name)
+		}
 		return fmt.Errorf("failed to ping connection %s: %w", connCfg.Name, err)
 	}
 

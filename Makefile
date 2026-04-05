@@ -126,6 +126,7 @@ test-integration-ssh:
 	@docker compose -f docker-compose.test.yml up -d --wait --wait-timeout 90 mysql80 ssh_bastion
 	@MYSQL_SSH_HOST=localhost MYSQL_SSH_PORT=2222 MYSQL_SSH_USER=root \
 		MYSQL_SSH_KEY_PATH="$$(pwd)/tests/integration/fixtures/ssh_test_key" \
+		MYSQL_SSH_KNOWN_HOSTS="$$(pwd)/tests/integration/fixtures/ssh_bastion_known_hosts" \
 		MYSQL_SSH_TEST_DSN="mcpuser:mcppass00@tcp(mysql80:3306)/testdb?parseTime=true" \
 		go test -tags=integration -v -run TestSSHTunnel ./tests/integration/...; \
 		TEST_EXIT=$$?; \

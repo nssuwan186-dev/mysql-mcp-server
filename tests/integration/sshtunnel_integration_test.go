@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -26,7 +27,8 @@ import (
 //
 //	MYSQL_SSH_HOST=localhost MYSQL_SSH_PORT=2222 MYSQL_SSH_USER=root \
 //	MYSQL_SSH_KEY_PATH=$PWD/tests/integration/fixtures/ssh_test_key \
-//	MYSQL_SSH_TEST_DSN="mcpuser:mcppass00@tcp(mysql80:3306)/testdb?parseTime=true" \
+//	MYSQL_SSH_KNOWN_HOSTS=$PWD/tests/integration/fixtures/ssh_bastion_known_hosts \
+//	MYSQL_SSH_TEST_DSN="root:testpass@tcp(mysql80:3306)/testdb?parseTime=true" \
 //	go test -tags=integration -v -run TestSSHTunnel ./tests/integration/...
 func TestSSHTunnel(t *testing.T) {
 	host := os.Getenv("MYSQL_SSH_HOST")
@@ -55,6 +57,18 @@ func TestSSHTunnel(t *testing.T) {
 		t.Skipf("SSH key not found at %s (set MYSQL_SSH_KEY_PATH)", absKey)
 	}
 
+	knownHosts := strings.TrimSpace(os.Getenv("MYSQL_SSH_KNOWN_HOSTS"))
+	if knownHosts == "" {
+		knownHosts = filepath.Join(filepath.Dir(absKey), "ssh_bastion_known_hosts")
+	}
+	absKH, err := filepath.Abs(knownHosts)
+	if err != nil {
+		t.Fatalf("resolve known_hosts path: %v", err)
+	}
+	if _, err := os.Stat(absKH); err != nil {
+		t.Fatalf("known_hosts fixture missing at %s (set MYSQL_SSH_KNOWN_HOSTS)", absKH)
+	}
+
 	cfg, err := mysql.ParseDSN(dsnBehindBastion)
 	if err != nil {
 		t.Fatalf("parse MYSQL_SSH_TEST_DSN: %v", err)
@@ -65,10 +79,11 @@ func TestSSHTunnel(t *testing.T) {
 	}
 
 	tunnelCfg := sshtunnel.Config{
-		Host:    host,
-		User:    user,
-		KeyPath: absKey,
-		Port:    port,
+		Host:           host,
+		User:           user,
+		KeyPath:        absKey,
+		Port:           port,
+		KnownHostsPath: absKH,
 	}
 	localAddr, closeTunnel, err := sshtunnel.Tunnel(tunnelCfg, remoteAddr)
 	if err != nil {

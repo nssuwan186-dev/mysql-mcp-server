@@ -91,8 +91,11 @@ var (
 	toolListStatusWrapped      = wrapTool("list_status", toolListStatus)
 	toolListVariablesWrapped   = wrapTool("list_variables", toolListVariables)
 
-	toolProcessListWrapped   = wrapTool("process_list", toolProcessList)
-	toolKillQueryWrapped     = wrapTool("kill_query", toolKillQuery)
-	toolReadAuditLogWrapped  = wrapTool("read_audit_log", toolReadAuditLog)
-	toolSlowQueryLogWrapped  = wrapTool("slow_query_log", toolSlowQueryLog)
+	toolSearchSchemaWrapped = wrapTool("search_schema", toolSearchSchema)
+	toolSchemaDiffWrapped   = wrapTool("schema_diff", toolSchemaDiff)
+
+	toolProcessListWrapped  = wrapTool("process_list", toolProcessList)
+	toolKillQueryWrapped    = wrapTool("kill_query", toolKillQuery)
+	toolReadAuditLogWrapped = wrapTool("read_audit_log", toolReadAuditLog)
+	toolSlowQueryLogWrapped = wrapTool("slow_query_log", toolSlowQueryLog)
 )

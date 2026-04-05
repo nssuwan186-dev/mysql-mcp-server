@@ -1,6 +1,7 @@
 package sshtunnel
 
 import (
+	"path/filepath"
 	"testing"
 )
 
@@ -32,5 +33,35 @@ func TestTunnel_InvalidKeyPath(t *testing.T) {
 	}, "mysql.internal:3306")
 	if err == nil {
 		t.Error("expected error for nonexistent key file")
+	}
+}
+
+func TestBuildHostKeyCallback_Insecure(t *testing.T) {
+	t.Parallel()
+	cb, err := buildHostKeyCallback(Config{InsecureIgnoreHostKey: true})
+	if err != nil || cb == nil {
+		t.Fatalf("buildHostKeyCallback: %v", err)
+	}
+}
+
+func TestBuildHostKeyCallback_StrictMissingKnownHosts(t *testing.T) {
+	t.Parallel()
+	p := filepath.Join(t.TempDir(), "no_such_known_hosts")
+	_, err := buildHostKeyCallback(Config{KnownHostsPath: p})
+	if err == nil {
+		t.Fatal("expected error when known_hosts file is missing")
+	}
+}
+
+func TestTunnel_ExpandTildeKeyPath(t *testing.T) {
+	// KeyPath "~/nonexistent_key" is expanded to $HOME/nonexistent_key, then ReadFile fails
+	_, _, err := Tunnel(Config{
+		Host:    "bastion.example.com",
+		User:    "deploy",
+		KeyPath: "~/nonexistent_ssh_key_12345",
+		Port:    22,
+	}, "mysql.internal:3306")
+	if err == nil {
+		t.Error("expected error when key path expands to nonexistent file")
 	}
 }

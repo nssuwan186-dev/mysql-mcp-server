@@ -49,16 +49,20 @@ type FileConnectionConfig struct {
 
 // FileSSHConfig represents SSH tunnel settings in the config file.
 type FileSSHConfig struct {
-	Host    string `yaml:"host" json:"host"`
-	User    string `yaml:"user" json:"user"`
-	KeyPath string `yaml:"key_path" json:"key_path"`
-	Port    int    `yaml:"port" json:"port"` // 0 = default 22
+	Host                  string `yaml:"host" json:"host"`
+	User                  string `yaml:"user" json:"user"`
+	KeyPath               string `yaml:"key_path" json:"key_path"`
+	Port                  int    `yaml:"port" json:"port"` // 0 = default 22
+	StrictHostKeyChecking *bool  `yaml:"strict_host_key_checking,omitempty" json:"strict_host_key_checking,omitempty"`
+	KnownHostsPath        string `yaml:"known_hosts,omitempty" json:"known_hosts,omitempty"`
+	HostKeyFingerprint    string `yaml:"host_key_fingerprint,omitempty" json:"host_key_fingerprint,omitempty"`
 }
 
 // FileQueryConfig represents query settings in the config file.
 type FileQueryConfig struct {
-	MaxRows        int `yaml:"max_rows" json:"max_rows"`
-	TimeoutSeconds int `yaml:"timeout_seconds" json:"timeout_seconds"`
+	MaxRows        int      `yaml:"max_rows" json:"max_rows"`
+	TimeoutSeconds int      `yaml:"timeout_seconds" json:"timeout_seconds"`
+	MaskColumns    []string `yaml:"mask_columns" json:"mask_columns"`
 }
 
 // FilePoolConfig represents connection pool settings in the config file.
@@ -252,6 +256,9 @@ func (fc *FileConfig) ToConfig() *Config {
 	if fc.Query.TimeoutSeconds > 0 {
 		cfg.QueryTimeout = secondsToDuration(fc.Query.TimeoutSeconds)
 	}
+	if len(fc.Query.MaskColumns) > 0 {
+		cfg.MaskColumns = fc.Query.MaskColumns
+	}
 
 	if fc.Pool.MaxOpenConns > 0 {
 		cfg.MaxOpenConns = fc.Pool.MaxOpenConns
@@ -344,10 +351,13 @@ func (fc *FileConfig) ToConfig() *Config {
 		}
 		if conn.SSH != nil && (conn.SSH.Host != "" || conn.SSH.User != "" || conn.SSH.KeyPath != "") {
 			cc.SSH = &SSHConfig{
-				Host:    conn.SSH.Host,
-				User:    conn.SSH.User,
-				KeyPath: conn.SSH.KeyPath,
-				Port:    conn.SSH.Port,
+				Host:                  conn.SSH.Host,
+				User:                  conn.SSH.User,
+				KeyPath:               conn.SSH.KeyPath,
+				Port:                  conn.SSH.Port,
+				StrictHostKeyChecking: conn.SSH.StrictHostKeyChecking,
+				KnownHostsPath:        conn.SSH.KnownHostsPath,
+				HostKeyFingerprint:    conn.SSH.HostKeyFingerprint,
 			}
 		}
 		cfg.Connections = append(cfg.Connections, cc)
@@ -363,6 +373,7 @@ func PrintConfig(cfg *Config) string {
 		Query: FileQueryConfig{
 			MaxRows:        cfg.MaxRows,
 			TimeoutSeconds: int(cfg.QueryTimeout.Seconds()),
+			MaskColumns:    cfg.MaskColumns,
 		},
 		Pool: FilePoolConfig{
 			MaxOpenConns:           cfg.MaxOpenConns,
@@ -410,10 +421,13 @@ func PrintConfig(cfg *Config) string {
 		}
 		if conn.SSH != nil {
 			fcc.SSH = &FileSSHConfig{
-				Host:    conn.SSH.Host,
-				User:    conn.SSH.User,
-				KeyPath: conn.SSH.KeyPath,
-				Port:    conn.SSH.Port,
+				Host:                  conn.SSH.Host,
+				User:                  conn.SSH.User,
+				KeyPath:               conn.SSH.KeyPath,
+				Port:                  conn.SSH.Port,
+				StrictHostKeyChecking: conn.SSH.StrictHostKeyChecking,
+				KnownHostsPath:        conn.SSH.KnownHostsPath,
+				HostKeyFingerprint:    conn.SSH.HostKeyFingerprint,
 			}
 		}
 		fc.Connections[conn.Name] = fcc

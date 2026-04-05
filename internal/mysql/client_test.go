@@ -2,11 +2,19 @@ package mysql
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
 	sqlmock "github.com/DATA-DOG/go-sqlmock"
+	"github.com/go-sql-driver/mysql"
 )
+
+type testNetTempErr struct{}
+
+func (testNetTempErr) Error() string   { return "temporary network error" }
+func (testNetTempErr) Timeout() bool   { return true }
+func (testNetTempErr) Temporary() bool { return true }
 
 func newTestClient(t *testing.T) (*Client, sqlmock.Sqlmock) {
 	t.Helper()
@@ -59,6 +67,98 @@ func TestRunQueryRespectsMaxRows(t *testing.T) {
 		t.Fatalf("unexpected row data: %+v", result)
 	}
 
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet expectations: %v", err)
+	}
+}
+
+func TestRunQueryWithRetry(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("failed to create sqlmock: %v", err)
+	}
+	defer db.Close()
+
+	cfg := Config{
+		MaxRows:       5,
+		QueryTimeoutS: 5,
+		Retry: RetryConfig{
+			MaxRetries:  2,
+			MaxInterval: 2 * time.Second,
+		},
+	}
+
+	client, err := NewWithDB(db, cfg)
+	if err != nil {
+		t.Fatalf("failed to create client: %v", err)
+	}
+
+	sqlText := "SELECT id FROM users"
+
+	// First call fails with a transient network-style error (covers net.Error path).
+	mock.ExpectQuery(sqlText).WillReturnError(testNetTempErr{})
+
+	// Second call succeeds
+	rows := sqlmock.NewRows([]string{"id"}).AddRow(1)
+	mock.ExpectQuery(sqlText).WillReturnRows(rows)
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+
+	result, err := client.RunQuery(ctx, sqlText, 10)
+	if err != nil {
+		t.Fatalf("RunQuery returned error after retry: %v", err)
+	}
+
+	if len(result) != 1 || result[0]["id"] != int64(1) {
+		t.Fatalf("unexpected result: %+v", result)
+	}
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet expectations: %v", err)
+	}
+}
+
+func TestRunQueryPermanentError(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("failed to create sqlmock: %v", err)
+	}
+	defer db.Close()
+
+	cfg := Config{
+		MaxRows:       5,
+		QueryTimeoutS: 5,
+		Retry: RetryConfig{
+			MaxRetries:  2,
+			MaxInterval: 2 * time.Second,
+		},
+	}
+
+	client, err := NewWithDB(db, cfg)
+	if err != nil {
+		t.Fatalf("failed to create client: %v", err)
+	}
+
+	sqlText := "SELECT id FROM users"
+
+	// Permanent error (e.g. syntax error) should not retry
+	mock.ExpectQuery(sqlText).WillReturnError(&mysql.MySQLError{Number: 1064, Message: "Syntax error"})
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+
+	_, err = client.RunQuery(ctx, sqlText, 10)
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+
+	var mysqlErr *mysql.MySQLError
+	if !errors.As(err, &mysqlErr) || mysqlErr.Number != 1064 {
+		t.Fatalf("expected MySQL 1064 error, got %v", err)
+	}
+
+	// Should only have 1 expectation met because it shouldn't retry
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatalf("unmet expectations: %v", err)
 	}

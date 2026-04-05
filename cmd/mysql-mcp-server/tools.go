@@ -55,10 +55,6 @@ func toolListDatabases(
 		return nil, ListDatabasesOutput{}, fmt.Errorf("row iteration failed: %w", err)
 	}
 
-	if err := rows.Err(); err != nil {
-		return nil, ListDatabasesOutput{}, fmt.Errorf("row iteration failed: %w", err)
-	}
-
 	return nil, out, nil
 }
 
@@ -140,20 +136,6 @@ func toolListTables(
 		}
 	}
 
-	if err := rows.Err(); err != nil {
-		return nil, ListTablesOutput{}, fmt.Errorf("ListTables rows iteration: %w", err)
-	}
-
-	if len(out.Tables) == 0 {
-		exists, err := schemaExists(ctx, input.Database)
-		if err != nil {
-			return nil, ListTablesOutput{}, err
-		}
-		if !exists {
-			return nil, ListTablesOutput{}, fmt.Errorf("database not found: %s", input.Database)
-		}
-	}
-
 	return nil, out, nil
 }
 
@@ -214,28 +196,6 @@ func toolDescribeTable(
 			break
 		}
 	}
-	if err := rows.Err(); err != nil {
-		return nil, DescribeTableOutput{}, fmt.Errorf("row iteration failed: %w", err)
-	}
-
-	if len(out.Columns) == 0 {
-		exists, err := tableExists(ctx, input.Database, input.Table)
-		if err != nil {
-			return nil, DescribeTableOutput{}, err
-		}
-		if !exists {
-			schemaOk, err := schemaExists(ctx, input.Database)
-			if err != nil {
-				return nil, DescribeTableOutput{}, err
-			}
-			if !schemaOk {
-				return nil, DescribeTableOutput{}, fmt.Errorf("database not found: %s", input.Database)
-			}
-			return nil, DescribeTableOutput{}, fmt.Errorf("table not found: %s.%s", input.Database, input.Table)
-		}
-		return nil, DescribeTableOutput{}, fmt.Errorf("no columns found for table: %s.%s", input.Database, input.Table)
-	}
-
 	if err := rows.Err(); err != nil {
 		return nil, DescribeTableOutput{}, fmt.Errorf("row iteration failed: %w", err)
 	}
@@ -468,6 +428,11 @@ func toolRunQuery(
 	if hasStar {
 		out.Warning = "SELECT * retrieves all columns, which increases payload size. " +
 			"Specify only the columns you need for better performance."
+	}
+
+	// Apply column masking if configured
+	if cfg != nil && len(cfg.MaskColumns) > 0 {
+		maskResults(out.Columns, out.Rows, cfg.MaskColumns)
 	}
 
 	// Token estimation for output (optional)
@@ -802,4 +767,34 @@ func toolUseConnection(
 		Message:  message,
 		Database: currentDB.String,
 	}, nil
+}
+
+func maskResults(cols []string, rows [][]interface{}, patterns []string) {
+	if len(patterns) == 0 {
+		return
+	}
+
+	maskIndices := make(map[int]bool)
+	for i, col := range cols {
+		lowerCol := strings.ToLower(col)
+		for _, p := range patterns {
+			p = strings.TrimSpace(p)
+			if p != "" && strings.Contains(lowerCol, strings.ToLower(p)) {
+				maskIndices[i] = true
+				break
+			}
+		}
+	}
+
+	if len(maskIndices) == 0 {
+		return
+	}
+
+	for _, row := range rows {
+		for idx := range maskIndices {
+			if idx < len(row) && row[idx] != nil {
+				row[idx] = "********"
+			}
+		}
+	}
 }
