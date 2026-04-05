@@ -15,7 +15,8 @@ Semantic Versioning.
 - **`search_schema`**: Find tables and columns matching a pattern across all accessible databases.
 - **`schema_diff`**: Compare table and column structures between two databases.
 - **Column Masking**: Redact sensitive data in `run_query` results using **`MYSQL_MCP_MASK_COLUMNS`** (e.g., `email,password,token`).
-- **Reliability**: Exponential-backoff retries for transient MySQL/network errors (deadlocks, timeouts, connection loss).
+- **`run_query`** / **`ping`**: exponential-backoff retries for transient MySQL/network errors (bad pooled connections, deadlocks, lock wait timeouts, etc.), with an optional pool **`Ping`** after **`driver.ErrBadConn`** to recover faster after MySQL restarts ([#110](https://github.com/askdba/mysql-mcp-server/issues/110), [#121](https://github.com/askdba/mysql-mcp-server/issues/121)).
+- **`run_query`**: **`offset`** pagination for SELECT/UNION (server-side **`LIMIT … OFFSET`**), returning **`has_more`** and **`next_offset`** ([#111](https://github.com/askdba/mysql-mcp-server/issues/111)).
 
 ## [1.7.0-rc.3] - 2026-03-31
 

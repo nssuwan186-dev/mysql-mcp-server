@@ -145,6 +145,8 @@ Environment variables:
 | MYSQL_CONN_MAX_LIFETIME_MINUTES | No | 30 | Connection max lifetime in minutes |
 | MYSQL_CONN_MAX_IDLE_TIME_MINUTES | No | 5 | Max idle time before connection is closed |
 | MYSQL_PING_TIMEOUT_SECONDS | No | 5 | Database ping/health check timeout |
+| MYSQL_MCP_DB_RETRY_MAX | No | 3 | Retries for transient errors on **`run_query`** and **`ping`** (0 disables retries) |
+| MYSQL_MCP_DB_RETRY_MAX_INTERVAL_MS | No | 10000 | Max exponential-backoff interval between retries (milliseconds) |
 | MYSQL_HTTP_REQUEST_TIMEOUT_SECONDS | No | 60 | HTTP request timeout in REST API mode |
 | MYSQL_SSL | No | – | Enable SSL/TLS for connections (true, false, skip-verify, preferred) |
 
@@ -541,9 +543,12 @@ Optional database context:
 { "sql": "SELECT * FROM users LIMIT 5", "database": "myapp" }
 ```
 
+**Offset pagination** (SELECT/UNION without an existing `LIMIT` in the SQL): pass **`offset`** (zero-based). The tool appends **`LIMIT (max_rows+1) OFFSET n`** server-side, returns at most **`max_rows`** rows, and sets **`has_more`** / **`next_offset`** when another page may exist. Do not add your own `LIMIT` when using **`offset`**.
+
 - Rejects non-read-only SQL
 - Enforces row limit
 - Enforces timeout
+- Retries transient connection/network errors with backoff (see **`MYSQL_MCP_DB_RETRY_MAX`**)
 
 ### ping
 
@@ -908,7 +913,7 @@ export MYSQL_CONN_MAX_LIFETIME_MINUTES=60  # Connection lifetime
 export MYSQL_QUERY_TIMEOUT=30000    # Optional: timeout in ms (30 s) if you do not use MYSQL_QUERY_TIMEOUT_SECONDS
 ```
 
-`run_query` applies a server-side **`LIMIT`** when absent, returns **`truncated`** when more rows exist than the cap, and may **`warning`** on `SELECT *`. Use **`explain_query`** for plan **`warnings`** (full scans, filesort, etc.).
+`run_query` applies a server-side **`LIMIT`** when absent, returns **`truncated`** when more rows exist than the cap (non-pagination mode), returns **`has_more`** / **`next_offset`** when **`offset`** pagination is used, and may **`warning`** on `SELECT *`. Use **`explain_query`** for plan **`warnings`** (full scans, filesort, etc.).
 
 **MySQL `max_execution_time` vs MCP timeouts:** The server enforces **`MYSQL_QUERY_TIMEOUT_SECONDS`** (or **`MYSQL_QUERY_TIMEOUT`** in ms) on the Go side for every tool. That is independent of the MySQL session variable `max_execution_time` (often `0`, meaning “no engine-side cap”). For operator clarity: configure MCP query timeout for how long the client should wait; configure MySQL if you also want the optimizer to abort expensive SELECTs.
 
