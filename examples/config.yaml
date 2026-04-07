@@ -46,6 +46,7 @@ pool:
 features:
   extended_tools: false      # Enable extended tools (list_indexes, etc.)
   vector_tools: false        # Enable vector search tools (MySQL 9.0+)
+  token_card: false          # HTTP mode: live token dashboard at /status (requires http.enabled)
 
 # Logging settings
 logging:

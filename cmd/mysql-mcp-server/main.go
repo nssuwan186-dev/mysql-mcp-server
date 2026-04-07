@@ -12,6 +12,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/askdba/mysql-mcp-server/internal/config"
+	"github.com/askdba/mysql-mcp-server/internal/dbretry"
 	"github.com/askdba/mysql-mcp-server/internal/util"
 )
 
@@ -34,9 +35,11 @@ var (
 	maxRows        int
 	queryTimeout   time.Duration
 	pingTimeout    time.Duration
+	dbRetryCfg     dbretry.Config
 	extendedMode   bool
 	jsonLogging    bool
 	tokenTracking  bool
+	tokenCard      bool
 	tokenModel     string
 	tokenEstimator TokenEstimator
 
@@ -48,12 +51,13 @@ var (
 
 // parsedArgs holds the result of command-line argument parsing.
 type parsedArgs struct {
-	action       string // "", "version", "help", "print-config", "validate-config"
-	configPath   string // path from --config or --config=
-	validatePath string // path for --validate-config
-	silent       bool   // --silent or -s: suppress INFO/WARN logs
-	daemon       bool   // --daemon: fork to background (HTTP mode)
-	err          error  // parsing error (e.g., unknown flag)
+	action        string // "", "version", "help", "print-config", "validate-config"
+	configPath    string // path from --config or --config=
+	validatePath  string // path for --validate-config
+	silent        bool   // --silent or -s: suppress INFO/WARN logs
+	daemon        bool   // --daemon: fork to background (HTTP mode)
+	tokenCardFlag bool   // --token-card: enable live token monitoring UI
+	err           error  // parsing error (e.g., unknown flag)
 }
 
 // parseArgs parses command-line arguments and returns the result.
@@ -93,6 +97,8 @@ func parseArgs(args []string) parsedArgs {
 			result.silent = true
 		case "--daemon", "-d":
 			result.daemon = true
+		case "--token-card":
+			result.tokenCardFlag = true
 		default:
 			// Check if it's --config=path format
 			if len(arg) > 9 && arg[:9] == "--config=" {
@@ -151,6 +157,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("config error: %v", err)
 	}
+	initAccessControl(cfg.AllowedDatabases)
 
 	// Daemon mode requires HTTP mode; defer until after config load so we can check.
 	if parsed.daemon {
@@ -165,10 +172,19 @@ func main() {
 	maxRows = cfg.MaxRows
 	queryTimeout = cfg.QueryTimeout
 	pingTimeout = cfg.PingTimeout
+	dbRetryCfg = dbretry.Config{
+		MaxRetries:  cfg.DBRetryMaxRetries,
+		MaxInterval: cfg.DBRetryMaxInterval,
+	}
+	if dbRetryCfg.MaxInterval <= 0 {
+		dbRetryCfg.MaxInterval = 10 * time.Second
+	}
 	extendedMode = cfg.ExtendedMode
 	jsonLogging = cfg.JSONLogging
 	tokenTracking = cfg.TokenTracking
 	tokenModel = cfg.TokenModel
+	// CLI --token-card overrides config (OR with config value)
+	tokenCard = cfg.TokenCard || parsed.tokenCardFlag
 
 	// Initialize audit logger
 	auditLogger, err = NewAuditLogger(cfg.AuditLogPath)
@@ -225,10 +241,12 @@ func main() {
 		"extendedMode":     extendedMode,
 		"vectorMode":       cfg.VectorMode,
 		"httpMode":         cfg.HTTPMode,
+		"metricsHTTP":      cfg.MetricsHTTP,
 		"httpPort":         cfg.HTTPPort,
 		"jsonLogging":      jsonLogging,
 		"auditLogEnabled":  auditLogger.enabled,
 		"tokenTracking":    tokenTracking,
+		"tokenCard":        tokenCard,
 		"tokenModel":       tokenModel,
 		"connections":      len(cfg.Connections),
 		"activeConnection": activeName,
@@ -236,8 +254,13 @@ func main() {
 
 	// If HTTP mode is enabled, start REST API server instead of MCP
 	if cfg.HTTPMode {
-		startHTTPServer(cfg.HTTPPort, cfg.VectorMode)
+		startHTTPServer(cfg.HTTPPort, cfg.VectorMode, tokenCard)
 		return
+	}
+
+	// Optional: token metrics + /status on HTTP while MCP uses stdio (Claude Desktop, Cursor)
+	if cfg.MetricsHTTP {
+		go startTokenMetricsHTTPServer(cfg.HTTPPort, tokenCard)
 	}
 
 	// ---- Build MCP server ----
@@ -290,8 +313,16 @@ func registerCoreTools(server *mcp.Server) {
 	}, toolDescribeTableWrapped)
 
 	mcp.AddTool(server, &mcp.Tool{
-		Name:        "run_query",
-		Description: "Execute a read-only SQL query (SELECT/SHOW/DESCRIBE/EXPLAIN only). For complex queries, you MUST apply MySQL Query Optimization guidelines (e.g., filter early, use indexed columns without functions, use EXPLAIN) before executing.",
+		Name: "run_query",
+		Description: "Execute a read-only SQL query (SELECT/SHOW/DESCRIBE/EXPLAIN only). " +
+			"IMPORTANT: Always specify only the columns you need instead of SELECT * to reduce " +
+			"payload size and improve performance. Results are automatically capped at the " +
+			"configured row limit (default: 200 rows); include a LIMIT clause in your query " +
+			"to request fewer rows. For large SELECT result sets, use the offset field with " +
+			"max_rows as page size (omit LIMIT from SQL; the server injects LIMIT/OFFSET). " +
+			"The response includes has_more and next_offset when another page may exist. " +
+			"Apply MySQL optimization guidelines (e.g., filter early, use indexed columns, " +
+			"avoid functions on indexed columns, use EXPLAIN) before executing.",
 	}, toolRunQueryWrapped)
 
 	mcp.AddTool(server, &mcp.Tool{
@@ -301,7 +332,7 @@ func registerCoreTools(server *mcp.Server) {
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "server_info",
-		Description: "Get MySQL server version, uptime, and configuration details",
+		Description: "Get MySQL server version, uptime, and configuration details. Pass detailed=true for health metrics (ping ms, threads_running, slow_queries, buffer pool hit rate). When MYSQL_MCP_TOKEN_TRACKING=1, includes token usage totals.",
 	}, toolServerInfoWrapped)
 }
 
@@ -333,6 +364,31 @@ func registerVectorTools(server *mcp.Server) {
 
 func registerExtendedTools(server *mcp.Server) {
 	logInfo("Registering extended MySQL tools...", nil)
+
+	if cfg.ProcessAdmin {
+		mcp.AddTool(server, &mcp.Tool{
+			Name:        "process_list",
+			Description: "Show active server threads (SHOW PROCESSLIST). Requires MYSQL_MCP_PROCESS_ADMIN=1 and PROCESS privilege.",
+		}, toolProcessListWrapped)
+		mcp.AddTool(server, &mcp.Tool{
+			Name:        "kill_query",
+			Description: "Cancel the currently executing statement for a connection using id from process_list (KILL QUERY; does not disconnect the client). Requires MYSQL_MCP_PROCESS_ADMIN=1.",
+		}, toolKillQueryWrapped)
+	}
+
+	if cfg.ReadAuditTool && auditLogger != nil && auditLogger.enabled && cfg.AuditLogPath != "" {
+		mcp.AddTool(server, &mcp.Tool{
+			Name:        "read_audit_log",
+			Description: "Return the last lines of the configured MYSQL_MCP_AUDIT_LOG file (read-only). Requires MYSQL_MCP_READ_AUDIT_TOOL=1.",
+		}, toolReadAuditLogWrapped)
+	}
+
+	if cfg.SlowQueryTool {
+		mcp.AddTool(server, &mcp.Tool{
+			Name:        "slow_query_log",
+			Description: "Read recent rows from mysql.slow_log when slow_query_log uses TABLE output; otherwise summarize settings. Requires MYSQL_MCP_SLOW_QUERY_TOOL=1.",
+		}, toolSlowQueryLogWrapped)
+	}
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "list_indexes",
@@ -398,6 +454,16 @@ func registerExtendedTools(server *mcp.Server) {
 		Name:        "list_variables",
 		Description: "List MySQL server configuration variables",
 	}, toolListVariablesWrapped)
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "search_schema",
+		Description: "Find tables and columns matching a pattern across databases",
+	}, toolSearchSchemaWrapped)
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "schema_diff",
+		Description: "Compare the schema between two databases",
+	}, toolSchemaDiffWrapped)
 }
 
 // ===== Config File Commands =====
@@ -433,6 +499,7 @@ OPTIONS:
     -c, --config PATH           Use config file at PATH
     -s, --silent                Suppress INFO and WARN logs (ERROR still printed)
     -d, --daemon                Run in background (fork and detach; use with MYSQL_MCP_HTTP=1)
+    --token-card                Enable live token monitoring UI at /status (HTTP mode)
     --print-config              Print current configuration as YAML
     --validate-config PATH      Validate config file at PATH
 
@@ -454,20 +521,29 @@ CONFIGURATION:
         MYSQL_DSN                    MySQL DSN (e.g., user:pass@tcp(localhost:3306)/db)
 
     Optional:
-        MYSQL_MAX_ROWS               Max rows returned (default: 200)
+        MYSQL_MAX_ROWS               Max rows returned per query (default: 200)
         MYSQL_QUERY_TIMEOUT_SECONDS  Query timeout in seconds (default: 30)
+        MYSQL_QUERY_TIMEOUT          Query timeout in milliseconds (e.g. 30000); overridden by MYSQL_QUERY_TIMEOUT_SECONDS
         MYSQL_MCP_EXTENDED           Enable extended tools (set to 1)
         MYSQL_MCP_JSON_LOGS          Enable JSON structured logging (set to 1)
         MYSQL_MCP_TOKEN_TRACKING     Enable token usage estimation (set to 1)
         MYSQL_MCP_TOKEN_MODEL        Tokenizer encoding to use (default: cl100k_base)
+        MYSQL_MCP_TOKEN_CARD         Live token UI at /status: on by default in HTTP mode; set to 0 to disable
         MYSQL_MCP_AUDIT_LOG          Path to audit log file
+        MYSQL_MCP_ALLOWED_DATABASES Comma-separated schema allowlist (optional)
+        MYSQL_MCP_STRICT_READ_ONLY   Set 1 for transaction_read_only=ON on connections
+        MYSQL_MCP_PROCESS_ADMIN      Set 1 for process_list / kill_query tools (extended)
+        MYSQL_MCP_READ_AUDIT_TOOL    Set 1 for read_audit_log when audit path set
+        MYSQL_MCP_SLOW_QUERY_TOOL    Set 1 for slow_query_log tool (extended)
         MYSQL_MCP_VECTOR             Enable vector tools for MySQL 9.0+ (set to 1)
         MYSQL_MCP_HTTP               Enable REST API mode (set to 1)
-        MYSQL_HTTP_PORT              HTTP port for REST API mode (default: 9306)
+        MYSQL_MCP_METRICS_HTTP       With stdio MCP only: serve /status and /api/metrics/tokens on MYSQL_HTTP_PORT (set to 1); not used when MYSQL_MCP_HTTP=1
+        MYSQL_HTTP_PORT              HTTP port for REST API or metrics sidecar (default: 9306)
         MYSQL_HTTP_RATE_LIMIT        Enable rate limiting for HTTP mode (set to 1)
         MYSQL_HTTP_RATE_LIMIT_RPS    Rate limit: requests per second (default: 100)
         MYSQL_HTTP_RATE_LIMIT_BURST  Rate limit: burst size (default: 200)
-        MYSQL_MAX_OPEN_CONNS         Max open database connections (default: 10)
+        MYSQL_POOL_SIZE              Connection pool size / max open connections (default: 10); alias for MYSQL_MAX_OPEN_CONNS
+        MYSQL_MAX_OPEN_CONNS         Max open database connections (default: 10); overrides MYSQL_POOL_SIZE
         MYSQL_MAX_IDLE_CONNS         Max idle database connections (default: 5)
         MYSQL_CONN_MAX_LIFETIME_MINUTES  Connection max lifetime in minutes (default: 30)
 
@@ -507,6 +583,13 @@ EXAMPLES:
     # HTTP REST API mode
     export MYSQL_DSN="user:pass@tcp(localhost:3306)/mydb"
     export MYSQL_MCP_HTTP=1
+    export MYSQL_HTTP_PORT=9306
+    mysql-mcp-server
+
+    # Claude Desktop: stdio MCP + token dashboard on http://127.0.0.1:9306/status (same process)
+    export MYSQL_DSN="user:pass@tcp(127.0.0.1:3306)/db?parseTime=true"
+    export MYSQL_MCP_TOKEN_TRACKING=1
+    export MYSQL_MCP_METRICS_HTTP=1
     export MYSQL_HTTP_PORT=9306
     mysql-mcp-server
 

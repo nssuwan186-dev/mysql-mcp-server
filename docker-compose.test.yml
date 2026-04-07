@@ -5,13 +5,13 @@
 # Usage:
 #   Start all MySQL versions:   docker compose -f docker-compose.test.yml up -d
 #   Stop all:                   docker compose -f docker-compose.test.yml down
-#   Run tests against MySQL 8.0: MYSQL_TEST_DSN="root:testpass@tcp(localhost:3306)/testdb?parseTime=true" go test -tags=integration ./...
-#   Run tests against MySQL 8.4: MYSQL_TEST_DSN="root:testpass@tcp(localhost:3307)/testdb?parseTime=true" go test -tags=integration ./...
-#   Run tests against MySQL 9.0: MYSQL_TEST_DSN="root:testpass@tcp(localhost:3308)/testdb?parseTime=true" go test -tags=integration ./...
+#   Run tests against MySQL 8.0: MYSQL_TEST_DSN="mcpuser:mcppass00@tcp(127.0.0.1:13306)/testdb?parseTime=true" go test -tags=integration ./...
+#   Run tests against MySQL 8.4: MYSQL_TEST_DSN="mcpuser:mcppass00@tcp(127.0.0.1:3307)/testdb?parseTime=true" go test -tags=integration ./...
+#   Run tests against MySQL 9.0: MYSQL_TEST_DSN="mcpuser:mcppass00@tcp(127.0.0.1:3308)/testdb?parseTime=true" go test -tags=integration ./...
 #
 # Sakila Database:
 #   The Sakila sample database is also loaded for realistic integration testing.
-#   Access via: MYSQL_SAKILA_DSN="root:testpass@tcp(localhost:3306)/sakila?parseTime=true"
+#   Access via: MYSQL_SAKILA_DSN="mcpuser:mcppass00@tcp(127.0.0.1:13306)/sakila?parseTime=true"
 #
 # SSH tunnel integration test (issue #79):
 #   Start MySQL + bastion:  docker compose -f docker-compose.test.yml up -d mysql80 ssh_bastion
@@ -21,7 +21,6 @@ services:
   # MySQL 8.0 - LTS version
   mysql80:
     image: mysql:8.0
-    platform: linux/arm64
     container_name: mysql-mcp-test-80
     environment:
       MYSQL_ROOT_PASSWORD: testpass
@@ -29,12 +28,15 @@ services:
       MYSQL_USER: testuser
       MYSQL_PASSWORD: testpass
     ports:
-      - "3306:3306"
+      # Host 13306 avoids clashing with a local MySQL install on 3306 (common on dev machines).
+      - "13306:3306"
     volumes:
       - mysql80_data:/var/lib/mysql
       - ./tests/sql/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
       - ./tests/sql/sakila-schema.sql:/docker-entrypoint-initdb.d/02-sakila-schema.sql:ro
       - ./tests/sql/sakila-data.sql:/docker-entrypoint-initdb.d/03-sakila-data.sql:ro
+      - ./tests/sql/mcp_test_user.sql:/docker-entrypoint-initdb.d/04-mcp-test-user.sql:ro
+      - ./tests/sql/mcp_test_user_sakila.sql:/docker-entrypoint-initdb.d/05-mcp-test-user-sakila.sql:ro
     healthcheck:
       test: [ "CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-ptestpass" ]
       interval: 10s
@@ -47,7 +49,6 @@ services:
   # MySQL 8.4 - Innovation release
   mysql84:
     image: mysql:8.4
-    platform: linux/arm64
     container_name: mysql-mcp-test-84
     environment:
       MYSQL_ROOT_PASSWORD: testpass
@@ -61,6 +62,8 @@ services:
       - ./tests/sql/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
       - ./tests/sql/sakila-schema.sql:/docker-entrypoint-initdb.d/02-sakila-schema.sql:ro
       - ./tests/sql/sakila-data.sql:/docker-entrypoint-initdb.d/03-sakila-data.sql:ro
+      - ./tests/sql/mcp_test_user.sql:/docker-entrypoint-initdb.d/04-mcp-test-user.sql:ro
+      - ./tests/sql/mcp_test_user_sakila.sql:/docker-entrypoint-initdb.d/05-mcp-test-user-sakila.sql:ro
     healthcheck:
       test: [ "CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-ptestpass" ]
       interval: 10s
@@ -73,7 +76,6 @@ services:
   # MySQL 9.0 - Latest innovation release
   mysql90:
     image: mysql:9.0
-    platform: linux/arm64
     container_name: mysql-mcp-test-90
     environment:
       MYSQL_ROOT_PASSWORD: testpass
@@ -87,6 +89,8 @@ services:
       - ./tests/sql/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
       - ./tests/sql/sakila-schema.sql:/docker-entrypoint-initdb.d/02-sakila-schema.sql:ro
       - ./tests/sql/sakila-data.sql:/docker-entrypoint-initdb.d/03-sakila-data.sql:ro
+      - ./tests/sql/mcp_test_user.sql:/docker-entrypoint-initdb.d/04-mcp-test-user.sql:ro
+      - ./tests/sql/mcp_test_user_sakila.sql:/docker-entrypoint-initdb.d/05-mcp-test-user-sakila.sql:ro
     healthcheck:
       test: [ "CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-ptestpass" ]
       interval: 10s
@@ -118,7 +122,6 @@ services:
   # MariaDB 11.4 - Latest stable
   mariadb11:
     image: mariadb:11.4
-    platform: linux/arm64
     container_name: mysql-mcp-test-mariadb-11
     environment:
       MARIADB_ROOT_PASSWORD: testpass
@@ -132,6 +135,8 @@ services:
       - ./tests/sql/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
       - ./tests/sql/sakila-schema.sql:/docker-entrypoint-initdb.d/02-sakila-schema.sql:ro
       - ./tests/sql/sakila-data.sql:/docker-entrypoint-initdb.d/03-sakila-data.sql:ro
+      - ./tests/sql/mcp_test_user.sql:/docker-entrypoint-initdb.d/04-mcp-test-user.sql:ro
+      - ./tests/sql/mcp_test_user_sakila.sql:/docker-entrypoint-initdb.d/05-mcp-test-user-sakila.sql:ro
     healthcheck:
       test: [ "CMD", "mariadb-admin", "ping", "-h", "localhost", "-u", "root", "-ptestpass" ]
       interval: 10s

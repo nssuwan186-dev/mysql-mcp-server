@@ -28,6 +28,9 @@ type FileConfig struct {
 	// Feature flags
 	Features FileFeatureConfig `yaml:"features" json:"features"`
 
+	// Security / optional diagnostics
+	Security FileSecurityConfig `yaml:"security" json:"security"`
+
 	// Logging settings
 	Logging FileLoggingConfig `yaml:"logging" json:"logging"`
 
@@ -37,25 +40,29 @@ type FileConfig struct {
 
 // FileConnectionConfig represents a connection in the config file.
 type FileConnectionConfig struct {
-	DSN         string      `yaml:"dsn" json:"dsn"`
-	Description string      `yaml:"description" json:"description"`
-	ReadOnly    bool        `yaml:"read_only" json:"read_only"`
-	SSL         string      `yaml:"ssl" json:"ssl"`   // "true", "false", "skip-verify", or empty
+	DSN         string         `yaml:"dsn" json:"dsn"`
+	Description string         `yaml:"description" json:"description"`
+	ReadOnly    bool           `yaml:"read_only" json:"read_only"`
+	SSL         string         `yaml:"ssl" json:"ssl"` // "true", "false", "skip-verify", or empty
 	SSH         *FileSSHConfig `yaml:"ssh" json:"ssh"` // optional SSH tunnel (bastion)
 }
 
 // FileSSHConfig represents SSH tunnel settings in the config file.
 type FileSSHConfig struct {
-	Host    string `yaml:"host" json:"host"`
-	User    string `yaml:"user" json:"user"`
-	KeyPath string `yaml:"key_path" json:"key_path"`
-	Port    int    `yaml:"port" json:"port"` // 0 = default 22
+	Host                  string `yaml:"host" json:"host"`
+	User                  string `yaml:"user" json:"user"`
+	KeyPath               string `yaml:"key_path" json:"key_path"`
+	Port                  int    `yaml:"port" json:"port"` // 0 = default 22
+	StrictHostKeyChecking *bool  `yaml:"strict_host_key_checking,omitempty" json:"strict_host_key_checking,omitempty"`
+	KnownHostsPath        string `yaml:"known_hosts,omitempty" json:"known_hosts,omitempty"`
+	HostKeyFingerprint    string `yaml:"host_key_fingerprint,omitempty" json:"host_key_fingerprint,omitempty"`
 }
 
 // FileQueryConfig represents query settings in the config file.
 type FileQueryConfig struct {
-	MaxRows        int `yaml:"max_rows" json:"max_rows"`
-	TimeoutSeconds int `yaml:"timeout_seconds" json:"timeout_seconds"`
+	MaxRows        int      `yaml:"max_rows" json:"max_rows"`
+	TimeoutSeconds int      `yaml:"timeout_seconds" json:"timeout_seconds"`
+	MaskColumns    []string `yaml:"mask_columns" json:"mask_columns"`
 }
 
 // FilePoolConfig represents connection pool settings in the config file.
@@ -71,6 +78,16 @@ type FilePoolConfig struct {
 type FileFeatureConfig struct {
 	ExtendedTools bool `yaml:"extended_tools" json:"extended_tools"`
 	VectorTools   bool `yaml:"vector_tools" json:"vector_tools"`
+	TokenCard     bool `yaml:"token_card" json:"token_card"`
+}
+
+// FileSecurityConfig represents access-control and privileged tool flags.
+type FileSecurityConfig struct {
+	AllowedDatabases []string `yaml:"allowed_databases" json:"allowed_databases"`
+	StrictReadOnly   bool     `yaml:"strict_read_only" json:"strict_read_only"`
+	ProcessAdmin     bool     `yaml:"process_admin" json:"process_admin"`
+	ReadAuditTool    bool     `yaml:"read_audit_tool" json:"read_audit_tool"`
+	SlowQueryTool    bool     `yaml:"slow_query_tool" json:"slow_query_tool"`
 }
 
 // FileLoggingConfig represents logging settings in the config file.
@@ -83,9 +100,9 @@ type FileLoggingConfig struct {
 
 // FileHTTPConfig represents HTTP settings in the config file.
 type FileHTTPConfig struct {
-	Enabled               bool                `yaml:"enabled" json:"enabled"`
-	Port                  int                 `yaml:"port" json:"port"`
-	RequestTimeoutSeconds int                 `yaml:"request_timeout_seconds" json:"request_timeout_seconds"`
+	Enabled               bool                 `yaml:"enabled" json:"enabled"`
+	Port                  int                  `yaml:"port" json:"port"`
+	RequestTimeoutSeconds int                  `yaml:"request_timeout_seconds" json:"request_timeout_seconds"`
 	RateLimit             *FileRateLimitConfig `yaml:"rate_limit" json:"rate_limit"`
 }
 
@@ -230,6 +247,8 @@ func (fc *FileConfig) ToConfig() *Config {
 		RateLimitRPS:       float64(DefaultRateLimitRPS),
 		RateLimitBurst:     DefaultRateLimitBurst,
 		TokenModel:         "cl100k_base",
+		DBRetryMaxRetries:  3,
+		DBRetryMaxInterval: 10 * time.Second,
 	}
 
 	// Apply file config values (if set)
@@ -238,6 +257,17 @@ func (fc *FileConfig) ToConfig() *Config {
 	}
 	if fc.Query.TimeoutSeconds > 0 {
 		cfg.QueryTimeout = secondsToDuration(fc.Query.TimeoutSeconds)
+	}
+	if len(fc.Query.MaskColumns) > 0 {
+		var mask []string
+		for _, c := range fc.Query.MaskColumns {
+			if t := strings.TrimSpace(c); t != "" {
+				mask = append(mask, t)
+			}
+		}
+		if len(mask) > 0 {
+			cfg.MaskColumns = mask
+		}
 	}
 
 	if fc.Pool.MaxOpenConns > 0 {
@@ -258,6 +288,23 @@ func (fc *FileConfig) ToConfig() *Config {
 
 	cfg.ExtendedMode = fc.Features.ExtendedTools
 	cfg.VectorMode = fc.Features.VectorTools
+	cfg.TokenCard = fc.Features.TokenCard
+
+	if len(fc.Security.AllowedDatabases) > 0 {
+		cfg.AllowedDatabases = append([]string(nil), fc.Security.AllowedDatabases...)
+	}
+	if fc.Security.StrictReadOnly {
+		cfg.StrictReadOnly = true
+	}
+	if fc.Security.ProcessAdmin {
+		cfg.ProcessAdmin = true
+	}
+	if fc.Security.ReadAuditTool {
+		cfg.ReadAuditTool = true
+	}
+	if fc.Security.SlowQueryTool {
+		cfg.SlowQueryTool = true
+	}
 
 	cfg.JSONLogging = fc.Logging.JSONFormat
 	cfg.AuditLogPath = fc.Logging.AuditLogPath
@@ -314,10 +361,13 @@ func (fc *FileConfig) ToConfig() *Config {
 		}
 		if conn.SSH != nil && (conn.SSH.Host != "" || conn.SSH.User != "" || conn.SSH.KeyPath != "") {
 			cc.SSH = &SSHConfig{
-				Host:    conn.SSH.Host,
-				User:    conn.SSH.User,
-				KeyPath: conn.SSH.KeyPath,
-				Port:    conn.SSH.Port,
+				Host:                  conn.SSH.Host,
+				User:                  conn.SSH.User,
+				KeyPath:               conn.SSH.KeyPath,
+				Port:                  conn.SSH.Port,
+				StrictHostKeyChecking: conn.SSH.StrictHostKeyChecking,
+				KnownHostsPath:        conn.SSH.KnownHostsPath,
+				HostKeyFingerprint:    conn.SSH.HostKeyFingerprint,
 			}
 		}
 		cfg.Connections = append(cfg.Connections, cc)
@@ -333,6 +383,7 @@ func PrintConfig(cfg *Config) string {
 		Query: FileQueryConfig{
 			MaxRows:        cfg.MaxRows,
 			TimeoutSeconds: int(cfg.QueryTimeout.Seconds()),
+			MaskColumns:    cfg.MaskColumns,
 		},
 		Pool: FilePoolConfig{
 			MaxOpenConns:           cfg.MaxOpenConns,
@@ -344,6 +395,14 @@ func PrintConfig(cfg *Config) string {
 		Features: FileFeatureConfig{
 			ExtendedTools: cfg.ExtendedMode,
 			VectorTools:   cfg.VectorMode,
+			TokenCard:     cfg.TokenCard,
+		},
+		Security: FileSecurityConfig{
+			AllowedDatabases: cfg.AllowedDatabases,
+			StrictReadOnly:   cfg.StrictReadOnly,
+			ProcessAdmin:     cfg.ProcessAdmin,
+			ReadAuditTool:    cfg.ReadAuditTool,
+			SlowQueryTool:    cfg.SlowQueryTool,
 		},
 		Logging: FileLoggingConfig{
 			JSONFormat:    cfg.JSONLogging,
@@ -372,10 +431,13 @@ func PrintConfig(cfg *Config) string {
 		}
 		if conn.SSH != nil {
 			fcc.SSH = &FileSSHConfig{
-				Host:    conn.SSH.Host,
-				User:    conn.SSH.User,
-				KeyPath: conn.SSH.KeyPath,
-				Port:    conn.SSH.Port,
+				Host:                  conn.SSH.Host,
+				User:                  conn.SSH.User,
+				KeyPath:               conn.SSH.KeyPath,
+				Port:                  conn.SSH.Port,
+				StrictHostKeyChecking: conn.SSH.StrictHostKeyChecking,
+				KnownHostsPath:        conn.SSH.KnownHostsPath,
+				HostKeyFingerprint:    conn.SSH.HostKeyFingerprint,
 			}
 		}
 		fc.Connections[conn.Name] = fcc

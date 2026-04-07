@@ -1,5 +1,3 @@
-<!-- Kept in sync with ../test-steps.md (repo root). Edit either copy and mirror changes. -->
-
 1. Test steps run (Sakila integration matrix)
 
 Prereqs
@@ -99,6 +97,30 @@ Steps (from `<repo-root>`)
 12) Run Sakila tests on MySQL 8.0 (alt port)
     MYSQL_SAKILA_DSN="mcpuser:mcppass00@tcp(localhost:3311)/sakila?parseTime=true" \
       go test -tags=integration ./tests/integration -run Sakila -v
+
+### Optional — metrics HTTP sidecar (stdio + `/health`)
+
+Requires a reachable MySQL (e.g. mysql84 from step 1–2 above) and a built binary (`make build` from `<repo-root>`).
+
+1) In one terminal, start the server with metrics HTTP on a free port (example **19306**):
+
+   ```bash
+   MYSQL_DSN="mcpuser:mcppass00@tcp(127.0.0.1:3307)/sakila?parseTime=true" \
+     MYSQL_MCP_METRICS_HTTP=1 MYSQL_HTTP_PORT=19306 MYSQL_MCP_TOKEN_TRACKING=1 \
+     ./bin/mysql-mcp-server
+   ```
+
+   (Adjust **`MYSQL_DSN`** host/port if your compose MySQL listens elsewhere.)
+
+2) In another terminal, verify the sidecar responds:
+
+   ```bash
+   curl -sSf "http://127.0.0.1:19306/health"
+   ```
+
+   Expect a non-empty body (health JSON). Optionally open **`http://127.0.0.1:19306/status`** in a browser.
+
+3) Stop the server with **Ctrl+C** in the first terminal.
 
 Cleanup (requested option 2)
 13) Stop and remove compose containers, network, and volumes

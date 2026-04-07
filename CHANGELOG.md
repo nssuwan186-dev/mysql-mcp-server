@@ -7,59 +7,32 @@ Semantic Versioning.
 
 ## [Unreleased]
 
-### Added
-- Comprehensive MySQL Query Optimization Guide (`docs/mysql_query_optimization_comprehensive.md`) detailing optimizer statistics, advanced indexing, query plan analysis, and operational best practices (#92).
+### Security
 
-### Fixed
-- MariaDB job result missing from QA pipeline summary output in GitHub Actions (#92).
+- **SSH bastion host keys**: the tunnel now verifies the server host key by default using OpenSSH-style **`known_hosts`** (default file `~/.ssh/known_hosts`, or **`MYSQL_SSH_KNOWN_HOSTS`** / config **`known_hosts`**) or a pinned fingerprint (**`MYSQL_SSH_HOST_KEY_FINGERPRINT`** / **`host_key_fingerprint`**). To disable verification (MITM risk), you must **opt in** with **`MYSQL_SSH_STRICT_HOST_KEY_CHECKING=false`** or **`ssh_strict_host_key_checking: false`**. See README.
 
-## v1.6.0 - 2026-02-10
 ### Added
-- `--silent` / `-s`: suppress INFO and WARN logs (ERROR still printed to stderr). Useful for production or when running under a process manager.
-- `--daemon` / `-d`: run in background (fork and detach; intended for HTTP mode on Unix). On Windows, use a service manager instead.
-- Example systemd unit in `contrib/systemd/mysql-mcp-server.service` and launchd plist in `contrib/launchd/com.askdba.mysql-mcp-server.plist`.
-- Documentation: [docs/silent-and-daemon.md](docs/silent-and-daemon.md). Examples: [examples/config.yaml](examples/config.yaml) comments and [examples/production-usage.md](examples/production-usage.md).
-- SSH tunneling (bastion host) support: connect to MySQL via `ssh_host`, `ssh_user`, `ssh_key_path`, and optional `ssh_port` (config file or `MYSQL_SSH_*` env vars).
-- Native support for MariaDB 10.x and 11.x.
-- Automatic server type detection (`mysql` vs `mariadb`) in `server_info` tool.
-- MariaDB 11.4 integration test target in `Makefile` and `docker-compose.test.yml`.
-- Robust Unicode support for MariaDB initialization scripts.
+- **`search_schema`**: Find tables and columns matching a pattern across all accessible databases.
+- **`schema_diff`**: Compare table and column structures between two databases.
+- **Column Masking**: Redact sensitive data in `run_query` results using **`MYSQL_MCP_MASK_COLUMNS`** (e.g., `email,password,token`).
+- **`run_query`** / **`ping`**: exponential-backoff retries for transient MySQL/network errors (bad pooled connections, deadlocks, lock wait timeouts, etc.), with an optional pool **`Ping`** after **`driver.ErrBadConn`** to recover faster after MySQL restarts ([#110](https://github.com/askdba/mysql-mcp-server/issues/110), [#121](https://github.com/askdba/mysql-mcp-server/issues/121)).
+- **`run_query`**: **`offset`** pagination for SELECT/UNION (server-side **`LIMIT … OFFSET`**), returning **`has_more`** and **`next_offset`** ([#111](https://github.com/askdba/mysql-mcp-server/issues/111)).
+
+## [1.7.0-rc.3] - 2026-03-31
+
+Third release candidate: metrics HTTP sidecar for stdio MCP (Claude Desktop) and friendlier boolean env parsing.
+
+### Added
+
+- **`MYSQL_MCP_METRICS_HTTP`**: optional HTTP listener on **`MYSQL_HTTP_PORT`** while MCP uses **stdio** — **`GET /health`**, **`GET /api/metrics/tokens`**, **`GET /status`** in-process with the MCP server so token metrics match Claude Desktop usage ([#102](https://github.com/askdba/mysql-mcp-server/issues/102)).
+- **SSH tunneling (bastion host)**: connect to MySQL via `ssh_host`, `ssh_user`, `ssh_key_path`, and optional `ssh_port` (config file or `MYSQL_SSH_*` env vars). `key_path` supports `~` and `~/path` (expanded to user home). In this release, host key verification was not yet enforced; strict verification is documented under **[Unreleased]** ([#79](https://github.com/askdba/mysql-mcp-server/issues/79)).
 
 ### Changed
-- Refactored schema discovery tools (`list_databases`, `list_tables`, `describe_table`) to use `information_schema` for better compatibility and performance.
-- Upgraded `list_tables` to include engine type, estimated row count, and comments.
-- Upgraded `describe_table` to return comprehensive column details including collation and comments.
 
-### Fixed
-- Daemon mode now requires HTTP mode: `--daemon` without HTTP enabled exits with a clear error instead of forking an idle stdio process.
+- **`getEnvBool`**: treats **`true`**, **`yes`**, **`on`**, **`y`** as true (case-insensitive), not only **`1`**, for **`MYSQL_MCP_*`** and related flags.
+- **Full REST vs sidecar**: when **`MYSQL_MCP_HTTP=1`**, **`MetricsHTTP`** is cleared so the metrics-only listener does not run alongside the full HTTP API.
 
-## v1.5.0 - 2026-01-17
+---
 
-### Added
-- Architecture documentation with diagrams to explain system flows.
-- GitHub issue and PR templates to standardize contributions.
-- SSL/TLS configuration examples in config templates.
-
-### Changed
-- Global SSL settings now apply to JSON connection definitions.
-- SSL "preferred" maps to "skip-verify" for Go MySQL driver compatibility.
-- Updated dependencies, including the MCP SDK.
-
-### Fixed
-- Linter warnings in tests (errorlint, staticcheck).
-- Error comparisons in tests now use errors.Is for wrapped errors.
-- SQL validator empty branch removed.
-
-### Tests
-- Improved unit test coverage for internal MySQL client.
-- Improved HTTP handler coverage for cmd/mysql-mcp-server.
-
-### Documentation
-- Updated README for SSL/TLS behavior and configuration.
-- Corrected config file search paths in architecture docs.
-
-### Dependencies
-- github.com/modelcontextprotocol/go-sdk v1.1.0 -> v1.2.0
-- github.com/dlclark/regexp2 v1.10.0 -> v1.11.5
-- github.com/google/jsonschema-go v0.3.0 -> v0.4.2
-- golang.org/x/oauth2 v0.30.0 -> v0.34.0
+## [1.7.0-rc.2] - 2026-03-30
+... rest of the file ...

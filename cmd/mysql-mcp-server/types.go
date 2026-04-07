@@ -51,12 +51,17 @@ type DescribeTableOutput struct {
 type RunQueryInput struct {
 	SQL      string `json:"sql" jsonschema:"SQL query to execute; must start with SELECT, SHOW, DESCRIBE, or EXPLAIN. Apply MySQL optimization guidelines before execution."`
 	MaxRows  *int   `json:"max_rows,omitempty" jsonschema:"optional row limit overriding the default max rows"`
+	Offset   *int   `json:"offset,omitempty" jsonschema:"optional zero-based row offset for SELECT/UNION pagination; do not add LIMIT to the SQL when using this"`
 	Database string `json:"database,omitempty" jsonschema:"optional database name to USE before running the query"`
 }
 
 type QueryResult struct {
-	Columns []string        `json:"columns" jsonschema:"column names"`
-	Rows    [][]interface{} `json:"rows" jsonschema:"rows of values"`
+	Columns    []string        `json:"columns" jsonschema:"column names"`
+	Rows       [][]interface{} `json:"rows" jsonschema:"rows of values"`
+	Truncated  bool            `json:"truncated,omitempty" jsonschema:"true if more rows existed beyond the row limit (not set when the result size exactly equals the limit)"`
+	HasMore    bool            `json:"has_more,omitempty" jsonschema:"true when offset pagination indicates another page may exist"`
+	NextOffset *int            `json:"next_offset,omitempty" jsonschema:"pass as offset to retrieve the next page when has_more is true"`
+	Warning    string          `json:"warning,omitempty" jsonschema:"performance or usage warning, if any"`
 }
 
 type PingInput struct{}
@@ -67,19 +72,43 @@ type PingOutput struct {
 	Message   string `json:"message" jsonschema:"status message"`
 }
 
-type ServerInfoInput struct{}
+type ServerInfoInput struct {
+	Detailed bool `json:"detailed,omitempty" jsonschema:"when true, include health metrics (threads_running, slow_queries, buffer pool hit rate, ping latency)"`
+}
+
+// ServerHealthSnapshot is returned when server_info is called with detailed=true.
+type ServerHealthSnapshot struct {
+	PingLatencyMs          int64    `json:"ping_latency_ms,omitempty" jsonschema:"round-trip ping in milliseconds"`
+	ThreadsRunning         int      `json:"threads_running,omitempty" jsonschema:"Threads_running status"`
+	SlowQueries            int64    `json:"slow_queries,omitempty" jsonschema:"Slow_queries counter since startup"`
+	Questions              int64    `json:"questions,omitempty" jsonschema:"Questions counter since startup"`
+	BufferPoolHitPercent   *float64 `json:"buffer_pool_hit_percent,omitempty" jsonschema:"InnoDB buffer pool hit ratio 0-100 when available"`
+	BufferPoolReadRequests *int64   `json:"buffer_pool_read_requests,omitempty"`
+	BufferPoolReads        *int64   `json:"buffer_pool_reads,omitempty"`
+}
+
+// ServerTokenSnapshot summarizes token metrics when MYSQL_MCP_TOKEN_TRACKING=1.
+type ServerTokenSnapshot struct {
+	ToolCalls         int `json:"tool_calls,omitempty"`
+	TotalInputTokens  int `json:"total_input_tokens,omitempty"`
+	TotalOutputTokens int `json:"total_output_tokens,omitempty"`
+	TotalTokens       int `json:"total_tokens,omitempty"`
+	MetricsUptimeSec  int `json:"metrics_uptime_seconds,omitempty"`
+}
 
 type ServerInfoOutput struct {
-	Version          string `json:"version" jsonschema:"MySQL server version"`
-	ServerEngine     string `json:"server_engine" jsonschema:"Server engine (mysql or mariadb)"`
-	VersionComment   string `json:"version_comment" jsonschema:"MySQL version comment (e.g., MySQL Community Server)"`
-	Uptime           int64  `json:"uptime_seconds" jsonschema:"server uptime in seconds"`
-	CurrentDatabase  string `json:"current_database" jsonschema:"currently selected database, if any"`
-	CurrentUser      string `json:"current_user" jsonschema:"current MySQL user"`
-	CharacterSet     string `json:"character_set" jsonschema:"server character set"`
-	Collation        string `json:"collation" jsonschema:"server collation"`
-	MaxConnections   int    `json:"max_connections" jsonschema:"maximum allowed connections"`
-	ThreadsConnected int    `json:"threads_connected" jsonschema:"current number of connected threads"`
+	Version          string                `json:"version" jsonschema:"MySQL server version"`
+	ServerEngine     string                `json:"server_engine" jsonschema:"Server engine (mysql or mariadb)"`
+	VersionComment   string                `json:"version_comment" jsonschema:"MySQL version comment (e.g., MySQL Community Server)"`
+	Uptime           int64                 `json:"uptime_seconds" jsonschema:"server uptime in seconds"`
+	CurrentDatabase  string                `json:"current_database" jsonschema:"currently selected database, if any"`
+	CurrentUser      string                `json:"current_user" jsonschema:"current MySQL user"`
+	CharacterSet     string                `json:"character_set" jsonschema:"server character set"`
+	Collation        string                `json:"collation" jsonschema:"server collation"`
+	MaxConnections   int                   `json:"max_connections" jsonschema:"maximum allowed connections"`
+	ThreadsConnected int                   `json:"threads_connected" jsonschema:"current number of connected threads"`
+	Health           *ServerHealthSnapshot `json:"health,omitempty" jsonschema:"present when detailed=true"`
+	TokenMetrics     *ServerTokenSnapshot  `json:"token_metrics,omitempty" jsonschema:"present when token tracking is enabled"`
 }
 
 // ===== Multi-DSN Tool Types =====
@@ -107,6 +136,70 @@ type UseConnectionOutput struct {
 	Active   string `json:"active" jsonschema:"name of the now-active connection"`
 	Message  string `json:"message" jsonschema:"status message"`
 	Database string `json:"database,omitempty" jsonschema:"current database of the connection"`
+}
+
+// ===== Diagnostic / admin tools (extended, gated by config) =====
+
+type ProcessListInput struct{}
+
+type ProcessRow struct {
+	ID      int64  `json:"id" jsonschema:"connection / thread id"`
+	User    string `json:"user" jsonschema:"user@host"`
+	Host    string `json:"host" jsonschema:"client host"`
+	DB      string `json:"db,omitempty" jsonschema:"default database"`
+	Command string `json:"command" jsonschema:"thread command"`
+	Time    int    `json:"time" jsonschema:"seconds in current state"`
+	State   string `json:"state,omitempty"`
+	Info    string `json:"info,omitempty" jsonschema:"statement (truncated)"`
+}
+
+type ProcessListOutput struct {
+	Processes []ProcessRow `json:"processes" jsonschema:"active server threads"`
+	Note      string       `json:"note,omitempty" jsonschema:"privilege or compatibility note"`
+}
+
+type KillQueryInput struct {
+	ID int64 `json:"id" jsonschema:"connection/thread id from process_list (KILL QUERY target)"`
+}
+
+type KillQueryOutput struct {
+	OK      bool   `json:"ok" jsonschema:"true if KILL QUERY executed"`
+	Message string `json:"message" jsonschema:"result message"`
+}
+
+type ReadAuditLogInput struct {
+	Lines int `json:"lines,omitempty" jsonschema:"max lines from end of file (default 50, max 500)"`
+}
+
+type ReadAuditLogOutput struct {
+	Path      string   `json:"path" jsonschema:"audit file path"`
+	Lines     []string `json:"lines" jsonschema:"recent log lines (JSON entries)"`
+	Truncated bool     `json:"truncated,omitempty" jsonschema:"true if byte limit hit before reading full tail"`
+}
+
+type SlowQueryLogInput struct {
+	Limit int `json:"limit,omitempty" jsonschema:"max rows from mysql.slow_log (default 20, max 200)"`
+}
+
+type SlowQueryLogRow struct {
+	StartTime    string `json:"start_time,omitempty"`
+	UserHost     string `json:"user_host,omitempty"`
+	QueryTime    string `json:"query_time,omitempty"`
+	LockTime     string `json:"lock_time,omitempty"`
+	RowsSent     int64  `json:"rows_sent,omitempty"`
+	RowsExamined int64  `json:"rows_examined,omitempty"`
+	Database     string `json:"db,omitempty"`
+	LastInsertID int64  `json:"last_insert_id,omitempty"`
+	InsertID     int64  `json:"insert_id,omitempty"`
+	Query        string `json:"query,omitempty" jsonschema:"truncated SQL text"`
+}
+
+type SlowQueryLogOutput struct {
+	Mode        string            `json:"mode" jsonschema:"table_rows, file, or disabled"`
+	Message     string            `json:"message,omitempty"`
+	Settings    map[string]string `json:"settings,omitempty" jsonschema:"relevant @@variables when not table mode"`
+	Rows        []SlowQueryLogRow `json:"rows,omitempty"`
+	SlowQueries int64             `json:"slow_queries_status,omitempty" jsonschema:"Slow_queries counter"`
 }
 
 // ===== Vector Tool Types (MySQL 9.0+) =====
@@ -185,7 +278,8 @@ type ExplainQueryInput struct {
 }
 
 type ExplainQueryOutput struct {
-	Plan []map[string]interface{} `json:"plan" jsonschema:"query execution plan"`
+	Plan     []map[string]interface{} `json:"plan" jsonschema:"query execution plan"`
+	Warnings []string                 `json:"warnings,omitempty" jsonschema:"actionable optimization suggestions derived from the execution plan"`
 }
 
 type ListViewsInput struct {
@@ -345,4 +439,37 @@ type ServerVariable struct {
 
 type ListVariablesOutput struct {
 	Variables []ServerVariable `json:"variables" jsonschema:"server configuration variables"`
+}
+
+type SearchSchemaInput struct {
+	Pattern  string `json:"pattern" jsonschema:"search pattern for table or column names (uses SQL LIKE syntax, e.g., %user%)"`
+	Database string `json:"database,omitempty" jsonschema:"optional database name to restrict search"`
+}
+
+type SchemaMatch struct {
+	Database string `json:"database" jsonschema:"database name"`
+	Table    string `json:"table" jsonschema:"table name"`
+	Column   string `json:"column,omitempty" jsonschema:"column name (if matched)"`
+	Type     string `json:"type" jsonschema:"match type: TABLE or COLUMN"`
+}
+
+type SearchSchemaOutput struct {
+	Matches []SchemaMatch `json:"matches" jsonschema:"list of schema matches"`
+}
+
+type SchemaDiffInput struct {
+	SourceDatabase string `json:"source_database" jsonschema:"source database name"`
+	TargetDatabase string `json:"target_database" jsonschema:"target database name"`
+}
+
+type DiffResult struct {
+	Table   string `json:"table" jsonschema:"table name"`
+	Status  string `json:"status" jsonschema:"diff status (MISSING, EXTRA, CHANGED)"`
+	Details string `json:"details,omitempty" jsonschema:"details about the difference"`
+}
+
+type SchemaDiffOutput struct {
+	SourceDatabase string       `json:"source_database" jsonschema:"source database name"`
+	TargetDatabase string       `json:"target_database" jsonschema:"target database name"`
+	Diffs          []DiffResult `json:"diffs" jsonschema:"list of differences between schemas"`
 }

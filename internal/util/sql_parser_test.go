@@ -2,6 +2,7 @@
 package util
 
 import (
+	"sort"
 	"strings"
 	"testing"
 )
@@ -320,6 +321,98 @@ func TestValidateSQLCombined(t *testing.T) {
 	}
 }
 
+func TestReferencedSchemaQualifiers(t *testing.T) {
+	tests := []struct {
+		query string
+		want  []string
+	}{
+		{"SELECT * FROM users", nil},
+		{"SELECT * FROM other.t", []string{"other"}},
+		{"SELECT * FROM a.t JOIN b.u ON 1=1", []string{"a", "b"}},
+		{"SELECT * FROM users u WHERE u.id IN (SELECT x FROM other.t)", []string{"other"}},
+		{"SELECT 1 ORDER BY (SELECT a FROM other.t)", []string{"other"}},
+		{"SHOW TABLES FROM mydb", []string{"mydb"}},
+		{"USE myapp", []string{"myapp"}},
+		{"EXPLAIN SELECT 1 FROM z.t", []string{"z"}},
+		{"EXPLAIN FORMAT=JSON SELECT 1 FROM fmtjs.t", []string{"fmtjs"}},
+		{"EXPLAIN EXTENDED SELECT 1 FROM ext.t", []string{"ext"}},
+		{"DESCRIBE otherdb.tbl", []string{"otherdb"}},
+	}
+	for _, tc := range tests {
+		name := tc.query
+		if len(name) > 50 {
+			name = name[:50] + "…"
+		}
+		t.Run(name, func(t *testing.T) {
+			got, err := ReferencedSchemaQualifiers(tc.query)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var names []string
+			for k := range got {
+				names = append(names, k)
+			}
+			sort.Strings(names)
+			exp := append([]string(nil), tc.want...)
+			sort.Strings(exp)
+			if len(names) != len(exp) {
+				t.Fatalf("got %v, want %v", names, exp)
+			}
+			for i := range names {
+				if names[i] != exp[i] {
+					t.Fatalf("got %v, want %v", names, exp)
+				}
+			}
+		})
+	}
+
+	t.Run("multi-statement rejected", func(t *testing.T) {
+		_, err := ReferencedSchemaQualifiers("SELECT 1 FROM a.t; SELECT 1 FROM b.t")
+		if err == nil {
+			t.Fatal("expected error")
+		}
+	})
+}
+
+func TestShowEnumeratesAllSchemasInQuery(t *testing.T) {
+	if !ShowEnumeratesAllSchemasInQuery("SHOW DATABASES") {
+		t.Fatal("expected true for SHOW DATABASES")
+	}
+	if !ShowEnumeratesAllSchemasInQuery("SHOW DATABASES LIKE 'p%' ") {
+		t.Fatal("expected true for SHOW DATABASES LIKE")
+	}
+	if ShowEnumeratesAllSchemasInQuery("SHOW TABLES") {
+		t.Fatal("expected false for SHOW TABLES")
+	}
+	if ShowEnumeratesAllSchemasInQuery("SELECT 1") {
+		t.Fatal("expected false for SELECT")
+	}
+}
+
+func TestReferencedSchemaQualifiersExplainDML(t *testing.T) {
+	got, err := ReferencedSchemaQualifiers("EXPLAIN DELETE FROM otherdb.t WHERE id=1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := got["otherdb"]; !ok {
+		t.Fatalf("expected otherdb in %v", got)
+	}
+}
+
+func TestCollectFromOtherReadNonExplain(t *testing.T) {
+	out := make(map[string]struct{})
+	ok, err := collectFromOtherRead("SELECT 1 FROM a.b", out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok {
+		t.Fatal("expected handled=false when text is not EXPLAIN/DESCRIBE")
+	}
+	if len(out) != 0 {
+		t.Fatalf("expected empty out, got %v", out)
+	}
+}
+
 func TestParserValidationError(t *testing.T) {
 	err := &ParserValidationError{Reason: "test reason", Statement: "test statement"}
 	expected := "test reason: test statement"
@@ -392,4 +485,109 @@ func min(a, b int) int {
 		return a
 	}
 	return b
+}
+
+func TestInjectLimit(t *testing.T) {
+	tests := []struct {
+		name      string
+		sql       string
+		limit     int
+		wantSufx  string // expected suffix (case-insensitive)
+		unchanged bool   // true when the original query should be returned unchanged
+	}{
+		{
+			name:     "SELECT without LIMIT gets one added",
+			sql:      "SELECT * FROM users",
+			limit:    100,
+			wantSufx: " LIMIT 100",
+		},
+		{
+			name:      "SELECT that already has LIMIT is not changed",
+			sql:       "SELECT * FROM users LIMIT 5",
+			limit:     100,
+			unchanged: true,
+		},
+		{
+			name:     "SELECT with ORDER BY gets LIMIT appended",
+			sql:      "SELECT id FROM orders ORDER BY id DESC",
+			limit:    50,
+			wantSufx: " LIMIT 50",
+		},
+		{
+			name:     "SELECT with trailing semicolon strips semicolon and adds LIMIT",
+			sql:      "SELECT 1;",
+			limit:    10,
+			wantSufx: " LIMIT 10",
+		},
+		{
+			name:      "SHOW statement is not modified",
+			sql:       "SHOW TABLES",
+			limit:     100,
+			unchanged: true,
+		},
+		{
+			name:      "DESCRIBE statement is not modified",
+			sql:       "DESCRIBE users",
+			limit:     100,
+			unchanged: true,
+		},
+		{
+			name:      "limit=0 is a no-op",
+			sql:       "SELECT * FROM t",
+			limit:     0,
+			unchanged: true,
+		},
+		{
+			name:      "negative limit is a no-op",
+			sql:       "SELECT * FROM t",
+			limit:     -1,
+			unchanged: true,
+		},
+		{
+			name:     "UNION without LIMIT gets one added",
+			sql:      "SELECT id FROM a UNION SELECT id FROM b",
+			limit:    20,
+			wantSufx: " LIMIT 20",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := InjectLimit(tc.sql, tc.limit)
+			if tc.unchanged {
+				if got != tc.sql {
+					t.Errorf("expected unchanged SQL %q, got %q", tc.sql, got)
+				}
+				return
+			}
+			if !strings.HasSuffix(got, tc.wantSufx) {
+				t.Errorf("expected SQL to end with %q, got %q", tc.wantSufx, got)
+			}
+		})
+	}
+}
+
+func TestHasSelectStar(t *testing.T) {
+	tests := []struct {
+		name string
+		sql  string
+		want bool
+	}{
+		{"SELECT *", "SELECT * FROM users", true},
+		{"SELECT t.*", "SELECT t.* FROM users t", true},
+		{"SELECT columns", "SELECT id, name FROM users", false},
+		{"SHOW TABLES", "SHOW TABLES", false},
+		{"SELECT with no star", "SELECT id FROM users WHERE id = 1", false},
+		{"UNION with star on left", "SELECT * FROM a UNION SELECT id FROM b", true},
+		{"COUNT star is not a bare star", "SELECT COUNT(*) FROM users", false},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := HasSelectStar(tc.sql)
+			if got != tc.want {
+				t.Errorf("HasSelectStar(%q) = %v, want %v", tc.sql, got, tc.want)
+			}
+		})
+	}
 }

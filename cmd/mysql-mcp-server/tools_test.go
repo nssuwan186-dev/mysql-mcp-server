@@ -10,6 +10,7 @@ import (
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/askdba/mysql-mcp-server/internal/config"
+	"github.com/askdba/mysql-mcp-server/internal/dbretry"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -40,6 +41,7 @@ func setupMockDBFull(t *testing.T) mockDBResult {
 	oldMaxRows := maxRows
 	oldQueryTimeout := queryTimeout
 	oldPingTimeout := pingTimeout
+	oldDBRetryCfg := dbRetryCfg
 
 	// Set up mock connection manager with mock DB
 	cm := NewConnectionManager()
@@ -51,12 +53,14 @@ func setupMockDBFull(t *testing.T) mockDBResult {
 	maxRows = 1000
 	queryTimeout = 30 * time.Second
 	pingTimeout = time.Duration(config.DefaultPingTimeoutSecs) * time.Second
+	dbRetryCfg = dbretry.DefaultConfig()
 
 	cleanup := func() {
 		connManager = oldConnManager
 		maxRows = oldMaxRows
 		queryTimeout = oldQueryTimeout
 		pingTimeout = oldPingTimeout
+		dbRetryCfg = oldDBRetryCfg
 		mockDB.Close()
 	}
 
@@ -185,11 +189,6 @@ func TestToolListTablesEmptySchemaReturnsEmpty(t *testing.T) {
 	mock.ExpectQuery("SELECT 1 FROM information_schema.SCHEMATA WHERE SCHEMA_NAME = \\? LIMIT 1").
 		WithArgs("emptydb").
 		WillReturnRows(schemaRows)
-	// Allow duplicate schema checks if triggered by mock behavior.
-	schemaRowsSecond := sqlmock.NewRows([]string{"1"}).AddRow(1)
-	mock.ExpectQuery("SELECT 1 FROM information_schema.SCHEMATA WHERE SCHEMA_NAME = \\? LIMIT 1").
-		WithArgs("emptydb").
-		WillReturnRows(schemaRowsSecond)
 
 	ctx := context.Background()
 	_, output, err := toolListTables(ctx, &mcp.CallToolRequest{}, ListTablesInput{Database: "emptydb"})
@@ -904,6 +903,328 @@ func TestToolServerInfoFallback(t *testing.T) {
 		t.Errorf("expected threads 5, got %d", output.ThreadsConnected)
 	}
 
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Errorf("unfulfilled expectations: %v", err)
+	}
+}
+
+// ===== Tests for performance improvement features =====
+
+// Regression: negative MYSQL_MAX_ROWS / maxRows must not panic on slice prealloc (Codex P2).
+func TestToolRunQueryNegativeMaxRowsDoesNotPanic(t *testing.T) {
+	mock, cleanup := setupMockDB(t)
+	defer cleanup()
+
+	oldMaxRows := maxRows
+	maxRows = -1
+	defer func() { maxRows = oldMaxRows }()
+
+	mock.ExpectQuery("SELECT id FROM t").WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(1))
+
+	ctx := context.Background()
+	_, _, err := toolRunQuery(ctx, &mcp.CallToolRequest{}, RunQueryInput{
+		SQL: "SELECT id FROM t",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestToolRunQueryTruncatedFlag(t *testing.T) {
+	mock, cleanup := setupMockDB(t)
+	defer cleanup()
+
+	// Set a small maxRows so truncation is triggered
+	oldMaxRows := maxRows
+	maxRows = 2
+	defer func() { maxRows = oldMaxRows }()
+
+	// Return 5 rows but only read 2
+	rows := sqlmock.NewRows([]string{"id"}).
+		AddRow(1).
+		AddRow(2).
+		AddRow(3).
+		AddRow(4).
+		AddRow(5)
+
+	// With LIMIT injection, the query will have LIMIT 2 appended
+	mock.ExpectQuery("SELECT id FROM t LIMIT 2").WillReturnRows(rows)
+
+	ctx := context.Background()
+	_, output, err := toolRunQuery(ctx, &mcp.CallToolRequest{}, RunQueryInput{
+		SQL: "SELECT id FROM t",
+	})
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(output.Rows) != 2 {
+		t.Errorf("expected 2 rows, got %d", len(output.Rows))
+	}
+
+	if !output.Truncated {
+		t.Error("expected Truncated=true when row limit was hit")
+	}
+}
+
+func TestToolRunQueryNotTruncatedWhenResultMatchesLimitExactly(t *testing.T) {
+	mock, cleanup := setupMockDB(t)
+	defer cleanup()
+
+	oldMaxRows := maxRows
+	maxRows = 2
+	defer func() { maxRows = oldMaxRows }()
+
+	// Exactly two rows: no third row exists, so Truncated must stay false.
+	rows := sqlmock.NewRows([]string{"id"}).
+		AddRow(1).
+		AddRow(2)
+
+	mock.ExpectQuery("SELECT id FROM t LIMIT 2").WillReturnRows(rows)
+
+	ctx := context.Background()
+	_, output, err := toolRunQuery(ctx, &mcp.CallToolRequest{}, RunQueryInput{
+		SQL: "SELECT id FROM t",
+	})
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(output.Rows) != 2 {
+		t.Errorf("expected 2 rows, got %d", len(output.Rows))
+	}
+
+	if output.Truncated {
+		t.Error("expected Truncated=false when result count equals the limit and no further rows exist")
+	}
+}
+
+func TestToolRunQueryNotTruncated(t *testing.T) {
+	mock, cleanup := setupMockDB(t)
+	defer cleanup()
+
+	rows := sqlmock.NewRows([]string{"id"}).
+		AddRow(1).
+		AddRow(2)
+
+	mock.ExpectQuery("SELECT id FROM t LIMIT 1000").WillReturnRows(rows)
+
+	ctx := context.Background()
+	_, output, err := toolRunQuery(ctx, &mcp.CallToolRequest{}, RunQueryInput{
+		SQL: "SELECT id FROM t",
+	})
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(output.Rows) != 2 {
+		t.Errorf("expected 2 rows, got %d", len(output.Rows))
+	}
+
+	if output.Truncated {
+		t.Error("expected Truncated=false when all rows were returned")
+	}
+}
+
+func TestToolRunQuerySelectStarWarning(t *testing.T) {
+	mock, cleanup := setupMockDB(t)
+	defer cleanup()
+
+	rows := sqlmock.NewRows([]string{"id", "name"}).AddRow(1, "Alice")
+	mock.ExpectQuery("SELECT \\* FROM users LIMIT 1000").WillReturnRows(rows)
+
+	ctx := context.Background()
+	_, output, err := toolRunQuery(ctx, &mcp.CallToolRequest{}, RunQueryInput{
+		SQL: "SELECT * FROM users",
+	})
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if output.Warning == "" {
+		t.Error("expected a warning when SELECT * is used")
+	}
+}
+
+func TestToolRunQueryNoWarningForSpecificColumns(t *testing.T) {
+	mock, cleanup := setupMockDB(t)
+	defer cleanup()
+
+	rows := sqlmock.NewRows([]string{"id", "name"}).AddRow(1, "Alice")
+	mock.ExpectQuery("SELECT id, name FROM users LIMIT 1000").WillReturnRows(rows)
+
+	ctx := context.Background()
+	_, output, err := toolRunQuery(ctx, &mcp.CallToolRequest{}, RunQueryInput{
+		SQL: "SELECT id, name FROM users",
+	})
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if output.Warning != "" {
+		t.Errorf("expected no warning for specific column selection, got: %q", output.Warning)
+	}
+}
+
+func TestToolRunQueryLimitNotInjectedWhenPresent(t *testing.T) {
+	mock, cleanup := setupMockDB(t)
+	defer cleanup()
+
+	rows := sqlmock.NewRows([]string{"id"}).AddRow(1).AddRow(2)
+	// Query already has LIMIT 5 - should not get another LIMIT appended
+	mock.ExpectQuery("SELECT id FROM t LIMIT 5").WillReturnRows(rows)
+
+	ctx := context.Background()
+	_, output, err := toolRunQuery(ctx, &mcp.CallToolRequest{}, RunQueryInput{
+		SQL: "SELECT id FROM t LIMIT 5",
+	})
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(output.Rows) != 2 {
+		t.Errorf("expected 2 rows, got %d", len(output.Rows))
+	}
+}
+
+func TestToolRunQueryOffsetPaginationHasMore(t *testing.T) {
+	mock, cleanup := setupMockDB(t)
+	defer cleanup()
+
+	offset := 0
+	maxRowsArg := 3
+	rows := sqlmock.NewRows([]string{"id"}).
+		AddRow(1).
+		AddRow(2).
+		AddRow(3).
+		AddRow(4)
+
+	mock.ExpectQuery("SELECT id FROM t ORDER BY id LIMIT 4 OFFSET 0").WillReturnRows(rows)
+
+	ctx := context.Background()
+	_, output, err := toolRunQuery(ctx, &mcp.CallToolRequest{}, RunQueryInput{
+		SQL:     "SELECT id FROM t ORDER BY id",
+		MaxRows: &maxRowsArg,
+		Offset:  &offset,
+	})
+
+	if err != nil {
+		t.Fatalf("toolRunQuery failed: %v", err)
+	}
+	if len(output.Rows) != 3 {
+		t.Fatalf("expected 3 rows, got %d", len(output.Rows))
+	}
+	if !output.HasMore {
+		t.Error("expected HasMore when a fourth row exists")
+	}
+	if output.NextOffset == nil || *output.NextOffset != 3 {
+		t.Errorf("expected NextOffset 3, got %v", output.NextOffset)
+	}
+	if output.Truncated {
+		t.Error("pagination should use HasMore, not Truncated")
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Errorf("unfulfilled expectations: %v", err)
+	}
+}
+
+func TestToolRunQueryOffsetPaginationNextPage(t *testing.T) {
+	mock, cleanup := setupMockDB(t)
+	defer cleanup()
+
+	offset := 3
+	maxRowsArg := 3
+	rows := sqlmock.NewRows([]string{"id"}).
+		AddRow(4).
+		AddRow(5).
+		AddRow(6)
+
+	mock.ExpectQuery("SELECT id FROM t ORDER BY id LIMIT 4 OFFSET 3").WillReturnRows(rows)
+
+	ctx := context.Background()
+	_, output, err := toolRunQuery(ctx, &mcp.CallToolRequest{}, RunQueryInput{
+		SQL:     "SELECT id FROM t ORDER BY id",
+		MaxRows: &maxRowsArg,
+		Offset:  &offset,
+	})
+
+	if err != nil {
+		t.Fatalf("toolRunQuery failed: %v", err)
+	}
+	if len(output.Rows) != 3 {
+		t.Fatalf("expected 3 rows, got %d", len(output.Rows))
+	}
+	if output.HasMore {
+		t.Error("expected HasMore=false on last page")
+	}
+	if output.NextOffset != nil {
+		t.Errorf("expected nil NextOffset, got %v", output.NextOffset)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Errorf("unfulfilled expectations: %v", err)
+	}
+}
+
+func TestToolRunQueryOffsetNegative(t *testing.T) {
+	mock, cleanup := setupMockDB(t)
+	defer cleanup()
+
+	bad := -1
+	ctx := context.Background()
+	_, _, err := toolRunQuery(ctx, &mcp.CallToolRequest{}, RunQueryInput{
+		SQL:    "SELECT 1",
+		Offset: &bad,
+	})
+	if err == nil {
+		t.Fatal("expected error for negative offset")
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Errorf("unfulfilled expectations: %v", err)
+	}
+}
+
+// Regression: MYSQL_MAX_ROWS=0 with offset must not return next_offset equal to offset (Codex P2).
+func TestToolRunQueryOffsetPaginationRequiresPositiveLimit(t *testing.T) {
+	mock, cleanup := setupMockDB(t)
+	defer cleanup()
+
+	oldMaxRows := maxRows
+	maxRows = 0
+	defer func() { maxRows = oldMaxRows }()
+
+	off := 0
+	ctx := context.Background()
+	_, _, err := toolRunQuery(ctx, &mcp.CallToolRequest{}, RunQueryInput{
+		SQL:    "SELECT id FROM t ORDER BY id",
+		Offset: &off,
+	})
+	if err == nil {
+		t.Fatal("expected error when offset pagination is used with non-positive row limit")
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Errorf("unfulfilled expectations: %v", err)
+	}
+}
+
+func TestToolRunQueryPaginationRequiresSelect(t *testing.T) {
+	mock, cleanup := setupMockDB(t)
+	defer cleanup()
+
+	off := 0
+	ctx := context.Background()
+	_, _, err := toolRunQuery(ctx, &mcp.CallToolRequest{}, RunQueryInput{
+		SQL:    "SHOW TABLES",
+		Offset: &off,
+	})
+	if err == nil {
+		t.Fatal("expected error when offset is used with non-SELECT")
+	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Errorf("unfulfilled expectations: %v", err)
 	}

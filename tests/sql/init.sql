@@ -94,6 +94,6 @@ BEGIN
 END //
 DELIMITER ;
 
--- Note: testuser is created by Docker Compose via MYSQL_USER env var
--- In CI, we use root directly, so no additional grants needed
+-- Note: testuser is created by Docker Compose via MYSQL_USER env var.
+-- Integration tests and MCP use mcpuser/mcppass00 (see mcp_test_user.sql).
 

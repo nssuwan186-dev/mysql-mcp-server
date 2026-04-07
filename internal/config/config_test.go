@@ -12,7 +12,9 @@ func clearEnv() {
 		"MYSQL_CONNECTIONS",
 		"MYSQL_MAX_ROWS",
 		"MYSQL_QUERY_TIMEOUT_SECONDS",
+		"MYSQL_QUERY_TIMEOUT",
 		"MYSQL_MAX_OPEN_CONNS",
+		"MYSQL_POOL_SIZE",
 		"MYSQL_MAX_IDLE_CONNS",
 		"MYSQL_CONN_MAX_LIFETIME_MINUTES",
 		"MYSQL_CONN_MAX_IDLE_TIME_MINUTES",
@@ -20,11 +22,18 @@ func clearEnv() {
 		"MYSQL_MCP_EXTENDED",
 		"MYSQL_MCP_VECTOR",
 		"MYSQL_MCP_HTTP",
+		"MYSQL_MCP_METRICS_HTTP",
 		"MYSQL_MCP_JSON_LOGS",
 		"MYSQL_MCP_TOKEN_TRACKING",
 		"MYSQL_MCP_TOKEN_MODEL",
+		"MYSQL_MCP_TOKEN_CARD",
 		"MYSQL_HTTP_PORT",
 		"MYSQL_MCP_AUDIT_LOG",
+		"MYSQL_MCP_ALLOWED_DATABASES",
+		"MYSQL_MCP_STRICT_READ_ONLY",
+		"MYSQL_MCP_PROCESS_ADMIN",
+		"MYSQL_MCP_READ_AUDIT_TOOL",
+		"MYSQL_MCP_SLOW_QUERY_TOOL",
 		"MYSQL_SSL",
 	}
 	for _, v := range envVars {
@@ -180,6 +189,59 @@ func TestLoadOverridesFromEnv(t *testing.T) {
 	if cfg.AuditLogPath != "/var/log/audit.log" {
 		t.Fatalf("expected AuditLogPath=/var/log/audit.log, got %s", cfg.AuditLogPath)
 	}
+	if !cfg.TokenCard {
+		t.Fatal("expected TokenCard true by default when HTTP mode is on and MYSQL_MCP_TOKEN_CARD is unset")
+	}
+}
+
+func TestMetricsHTTPSidecarTokenCardDefault(t *testing.T) {
+	clearEnv()
+	os.Setenv("MYSQL_DSN", "user:pass@tcp(localhost:3306)/testdb")
+	os.Setenv("MYSQL_MCP_METRICS_HTTP", "1")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.HTTPMode {
+		t.Fatal("expected HTTPMode false when only METRICS_HTTP")
+	}
+	if !cfg.MetricsHTTP {
+		t.Fatal("expected MetricsHTTP true")
+	}
+	if !cfg.TokenCard {
+		t.Fatal("expected TokenCard true by default for metrics sidecar when MYSQL_MCP_TOKEN_CARD unset")
+	}
+}
+
+func TestHTTPModeClearsMetricsHTTP(t *testing.T) {
+	clearEnv()
+	os.Setenv("MYSQL_DSN", "user:pass@tcp(localhost:3306)/testdb")
+	os.Setenv("MYSQL_MCP_HTTP", "1")
+	os.Setenv("MYSQL_MCP_METRICS_HTTP", "1")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !cfg.HTTPMode {
+		t.Fatal("expected HTTPMode true")
+	}
+	if cfg.MetricsHTTP {
+		t.Fatal("expected MetricsHTTP cleared when full HTTP mode is on")
+	}
+}
+
+func TestHTTPModeTokenCardExplicitOff(t *testing.T) {
+	clearEnv()
+	os.Setenv("MYSQL_DSN", "user:pass@tcp(localhost:3306)/testdb")
+	os.Setenv("MYSQL_MCP_HTTP", "1")
+	os.Setenv("MYSQL_MCP_TOKEN_CARD", "0")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.TokenCard {
+		t.Fatal("expected TokenCard false when MYSQL_MCP_TOKEN_CARD=0")
+	}
 }
 
 func TestLoadMissingDSN(t *testing.T) {
@@ -282,21 +344,25 @@ func TestGetEnvBool(t *testing.T) {
 		t.Fatal("expected false for unset var")
 	}
 
-	// Test "1" returns true
-	os.Setenv("TEST_BOOL", "1")
-	if !GetEnvBool("TEST_BOOL") {
-		t.Fatal("expected true for '1'")
-	}
-
-	// Test other values return false
-	os.Setenv("TEST_BOOL", "true")
-	if GetEnvBool("TEST_BOOL") {
-		t.Fatal("expected false for 'true' (only '1' is true)")
+	// Test truthy values
+	for _, v := range []string{"1", "true", "TRUE", " yes ", "on", "y"} {
+		os.Setenv("TEST_BOOL", v)
+		if !GetEnvBool("TEST_BOOL") {
+			t.Fatalf("expected true for %q", v)
+		}
 	}
 
 	os.Setenv("TEST_BOOL", "0")
 	if GetEnvBool("TEST_BOOL") {
 		t.Fatal("expected false for '0'")
+	}
+	os.Setenv("TEST_BOOL", "false")
+	if GetEnvBool("TEST_BOOL") {
+		t.Fatal("expected false for 'false'")
+	}
+	os.Setenv("TEST_BOOL", "maybe")
+	if GetEnvBool("TEST_BOOL") {
+		t.Fatal("expected false for unknown value")
 	}
 
 	os.Unsetenv("TEST_BOOL")
@@ -387,5 +453,97 @@ func TestLoadNumberedDSNsWithGlobalSSL(t *testing.T) {
 	// server1 should use its own SSL setting
 	if cfg.Connections[1].SSL != "true" {
 		t.Errorf("expected SSL 'true' for server1, got '%s'", cfg.Connections[1].SSL)
+	}
+}
+
+func TestMySQLPoolSizeAlias(t *testing.T) {
+	clearEnv()
+
+	os.Setenv("MYSQL_DSN", "user:pass@tcp(localhost:3306)/db")
+	os.Setenv("MYSQL_POOL_SIZE", "15")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load returned error: %v", err)
+	}
+
+	if cfg.MaxOpenConns != 15 {
+		t.Fatalf("expected MaxOpenConns=15 from MYSQL_POOL_SIZE, got %d", cfg.MaxOpenConns)
+	}
+}
+
+func TestMySQLMaxOpenConnsTakesPrecedenceOverPoolSize(t *testing.T) {
+	clearEnv()
+
+	os.Setenv("MYSQL_DSN", "user:pass@tcp(localhost:3306)/db")
+	os.Setenv("MYSQL_POOL_SIZE", "15")
+	os.Setenv("MYSQL_MAX_OPEN_CONNS", "25")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load returned error: %v", err)
+	}
+
+	// MYSQL_MAX_OPEN_CONNS must take precedence over MYSQL_POOL_SIZE
+	if cfg.MaxOpenConns != 25 {
+		t.Fatalf("expected MaxOpenConns=25 (MYSQL_MAX_OPEN_CONNS wins), got %d", cfg.MaxOpenConns)
+	}
+}
+
+func TestMySQLQueryTimeoutMsAlias(t *testing.T) {
+	clearEnv()
+
+	os.Setenv("MYSQL_DSN", "user:pass@tcp(localhost:3306)/db")
+	os.Setenv("MYSQL_QUERY_TIMEOUT", "45000") // 45 000 ms = 45 s
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load returned error: %v", err)
+	}
+
+	if cfg.QueryTimeout != 45*time.Second {
+		t.Fatalf("expected QueryTimeout=45s from MYSQL_QUERY_TIMEOUT=45000, got %v", cfg.QueryTimeout)
+	}
+}
+
+func TestMySQLQueryTimeoutSecondsTakesPrecedenceOverMs(t *testing.T) {
+	clearEnv()
+
+	os.Setenv("MYSQL_DSN", "user:pass@tcp(localhost:3306)/db")
+	os.Setenv("MYSQL_QUERY_TIMEOUT", "45000")      // 45 s in ms
+	os.Setenv("MYSQL_QUERY_TIMEOUT_SECONDS", "60") // 60 s in seconds
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load returned error: %v", err)
+	}
+
+	// MYSQL_QUERY_TIMEOUT_SECONDS must take precedence
+	if cfg.QueryTimeout != 60*time.Second {
+		t.Fatalf("expected QueryTimeout=60s (MYSQL_QUERY_TIMEOUT_SECONDS wins), got %v", cfg.QueryTimeout)
+	}
+}
+
+func TestSecurityEnvOverrides(t *testing.T) {
+	clearEnv()
+	_ = os.Setenv("MYSQL_DSN", "user:pass@tcp(localhost:3306)/db")
+	_ = os.Setenv("MYSQL_MCP_ALLOWED_DATABASES", " a , b, c ")
+	_ = os.Setenv("MYSQL_MCP_STRICT_READ_ONLY", "1")
+	_ = os.Setenv("MYSQL_MCP_PROCESS_ADMIN", "1")
+	_ = os.Setenv("MYSQL_MCP_READ_AUDIT_TOOL", "true")
+	_ = os.Setenv("MYSQL_MCP_SLOW_QUERY_TOOL", "y")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.AllowedDatabases) != 3 || cfg.AllowedDatabases[0] != "a" {
+		t.Fatalf("allowed db list: %#v", cfg.AllowedDatabases)
+	}
+	if !cfg.StrictReadOnly || !cfg.ProcessAdmin || !cfg.ReadAuditTool || !cfg.SlowQueryTool {
+		t.Fatalf("flags: strict=%v admin=%v audit=%v slow=%v", cfg.StrictReadOnly, cfg.ProcessAdmin, cfg.ReadAuditTool, cfg.SlowQueryTool)
+	}
+	set := AllowedDatabaseSet(cfg.AllowedDatabases)
+	if len(set) != 3 {
+		t.Fatalf("set len %d", len(set))
 	}
 }

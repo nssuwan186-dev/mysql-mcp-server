@@ -22,6 +22,9 @@ func toolListIndexes(
 	if input.Database == "" || input.Table == "" {
 		return nil, ListIndexesOutput{}, fmt.Errorf("database and table are required")
 	}
+	if err := requireAllowedDatabase(input.Database); err != nil {
+		return nil, ListIndexesOutput{}, err
+	}
 
 	dbName, err := util.QuoteIdent(input.Database)
 	if err != nil {
@@ -99,6 +102,9 @@ func toolShowCreateTable(
 	if input.Database == "" || input.Table == "" {
 		return nil, ShowCreateTableOutput{}, fmt.Errorf("database and table are required")
 	}
+	if err := requireAllowedDatabase(input.Database); err != nil {
+		return nil, ShowCreateTableOutput{}, err
+	}
 
 	dbName, err := util.QuoteIdent(input.Database)
 	if err != nil {
@@ -137,10 +143,22 @@ func toolExplainQuery(
 		return nil, ExplainQueryOutput{}, fmt.Errorf("only SELECT statements can be explained")
 	}
 
+	database := strings.TrimSpace(input.Database)
+	if accessControlEnabled() && database == "" {
+		return nil, ExplainQueryOutput{}, fmt.Errorf("database is required when MYSQL_MCP_ALLOWED_DATABASES is set")
+	}
+	if database != "" {
+		if err := requireAllowedDatabase(database); err != nil {
+			return nil, ExplainQueryOutput{}, err
+		}
+	}
+	if err := requireReferencedSchemasInQuery(sqlText); err != nil {
+		return nil, ExplainQueryOutput{}, err
+	}
+
 	ctx, cancel := context.WithTimeout(ctx, queryTimeout)
 	defer cancel()
 
-	database := strings.TrimSpace(input.Database)
 	explainSQL := "EXPLAIN " + sqlText
 	var rows *sql.Rows
 	var err error
@@ -191,7 +209,71 @@ func toolExplainQuery(
 		out.Plan = append(out.Plan, row)
 	}
 
+	out.Warnings = analyzeExplainPlan(out.Plan)
+
 	return nil, out, nil
+}
+
+// analyzeExplainPlan inspects a traditional EXPLAIN plan and returns actionable
+// optimization suggestions. It checks for full-table scans, unused indexes,
+// filesort, and temporary-table operations.
+func analyzeExplainPlan(plan []map[string]interface{}) []string {
+	var warnings []string
+
+	isNullLike := func(s string) bool {
+		return s == "" || s == "<nil>" || strings.EqualFold(s, "null")
+	}
+
+	for _, row := range plan {
+		table := fmt.Sprintf("%v", row["table"])
+		accessType := strings.ToUpper(fmt.Sprintf("%v", row["type"]))
+		// Missing type becomes "<NIL>" after fmt + ToUpper; do not treat as a known access type.
+		accessTypeKnown := accessType != "" && !strings.EqualFold(accessType, "<nil>")
+		key := fmt.Sprintf("%v", row["key"])
+		possibleKeys := fmt.Sprintf("%v", row["possible_keys"])
+		extra := strings.ToLower(fmt.Sprintf("%v", row["Extra"]))
+
+		// Full table scan
+		if accessType == "ALL" {
+			if isNullLike(possibleKeys) {
+				warnings = append(warnings, fmt.Sprintf(
+					"Table '%s': full table scan with no candidate indexes — consider adding an index on the columns used in WHERE/JOIN conditions.",
+					table,
+				))
+			} else {
+				warnings = append(warnings, fmt.Sprintf(
+					"Table '%s': full table scan despite candidate indexes (%s) — verify the WHERE clause matches the index prefix and that column types align.",
+					table, possibleKeys,
+				))
+			}
+		}
+
+		// Index available but not used (requires a known non-ALL access type)
+		if isNullLike(key) && !isNullLike(possibleKeys) && accessType != "ALL" && accessTypeKnown {
+			warnings = append(warnings, fmt.Sprintf(
+				"Table '%s': indexes (%s) are available but none were chosen — check for type mismatches or functions wrapping indexed columns.",
+				table, possibleKeys,
+			))
+		}
+
+		// Filesort
+		if strings.Contains(extra, "using filesort") {
+			warnings = append(warnings, fmt.Sprintf(
+				"Table '%s': filesort required — consider a composite index whose column order matches your ORDER BY clause.",
+				table,
+			))
+		}
+
+		// Temporary table
+		if strings.Contains(extra, "using temporary") {
+			warnings = append(warnings, fmt.Sprintf(
+				"Table '%s': temporary table created — consider an index covering the columns used in GROUP BY or DISTINCT.",
+				table,
+			))
+		}
+	}
+
+	return warnings
 }
 
 func toolListViews(
@@ -201,6 +283,9 @@ func toolListViews(
 ) (*mcp.CallToolResult, ListViewsOutput, error) {
 	if input.Database == "" {
 		return nil, ListViewsOutput{}, fmt.Errorf("database is required")
+	}
+	if err := requireAllowedDatabase(input.Database); err != nil {
+		return nil, ListViewsOutput{}, err
 	}
 
 	ctx, cancel := context.WithTimeout(ctx, queryTimeout)
@@ -240,6 +325,9 @@ func toolListTriggers(
 	if input.Database == "" {
 		return nil, ListTriggersOutput{}, fmt.Errorf("database is required")
 	}
+	if err := requireAllowedDatabase(input.Database); err != nil {
+		return nil, ListTriggersOutput{}, err
+	}
 
 	ctx, cancel := context.WithTimeout(ctx, queryTimeout)
 	defer cancel()
@@ -277,6 +365,9 @@ func toolListProcedures(
 ) (*mcp.CallToolResult, ListProceduresOutput, error) {
 	if input.Database == "" {
 		return nil, ListProceduresOutput{}, fmt.Errorf("database is required")
+	}
+	if err := requireAllowedDatabase(input.Database); err != nil {
+		return nil, ListProceduresOutput{}, err
 	}
 
 	ctx, cancel := context.WithTimeout(ctx, queryTimeout)
@@ -317,6 +408,9 @@ func toolListFunctions(
 	if input.Database == "" {
 		return nil, ListFunctionsOutput{}, fmt.Errorf("database is required")
 	}
+	if err := requireAllowedDatabase(input.Database); err != nil {
+		return nil, ListFunctionsOutput{}, err
+	}
 
 	ctx, cancel := context.WithTimeout(ctx, queryTimeout)
 	defer cancel()
@@ -355,6 +449,9 @@ func toolListPartitions(
 ) (*mcp.CallToolResult, ListPartitionsOutput, error) {
 	if input.Database == "" || input.Table == "" {
 		return nil, ListPartitionsOutput{}, fmt.Errorf("database and table are required")
+	}
+	if err := requireAllowedDatabase(input.Database); err != nil {
+		return nil, ListPartitionsOutput{}, err
 	}
 
 	ctx, cancel := context.WithTimeout(ctx, queryTimeout)
@@ -398,6 +495,13 @@ func toolDatabaseSize(
 	req *mcp.CallToolRequest,
 	input DatabaseSizeInput,
 ) (*mcp.CallToolResult, DatabaseSizeOutput, error) {
+	database := strings.TrimSpace(input.Database)
+	if database != "" {
+		if err := requireAllowedDatabase(database); err != nil {
+			return nil, DatabaseSizeOutput{}, err
+		}
+	}
+
 	ctx, cancel := context.WithTimeout(ctx, queryTimeout)
 	defer cancel()
 
@@ -409,7 +513,7 @@ func toolDatabaseSize(
 		COUNT(*) as tables
 		FROM information_schema.TABLES`
 
-	if input.Database != "" {
+	if database != "" {
 		query += " WHERE TABLE_SCHEMA = ?"
 	} else {
 		query += " WHERE TABLE_SCHEMA NOT IN ('information_schema', 'performance_schema', 'mysql', 'sys')"
@@ -418,8 +522,8 @@ func toolDatabaseSize(
 
 	var rows *sql.Rows
 	var err error
-	if input.Database != "" {
-		rows, err = getDB().QueryContext(ctx, query, input.Database)
+	if database != "" {
+		rows, err = getDB().QueryContext(ctx, query, database)
 	} else {
 		rows, err = getDB().QueryContext(ctx, query)
 	}
@@ -432,6 +536,9 @@ func toolDatabaseSize(
 	for rows.Next() {
 		var d DatabaseSizeInfo
 		if err := rows.Scan(&d.Name, &d.SizeMB, &d.DataMB, &d.IndexMB, &d.Tables); err != nil {
+			continue
+		}
+		if accessControlEnabled() && !databaseAllowed(d.Name) {
 			continue
 		}
 		out.Databases = append(out.Databases, d)
@@ -453,6 +560,9 @@ func toolTableSize(
 ) (*mcp.CallToolResult, TableSizeOutput, error) {
 	if input.Database == "" {
 		return nil, TableSizeOutput{}, fmt.Errorf("database is required")
+	}
+	if err := requireAllowedDatabase(input.Database); err != nil {
+		return nil, TableSizeOutput{}, err
 	}
 
 	ctx, cancel := context.WithTimeout(ctx, queryTimeout)
@@ -515,6 +625,9 @@ func toolForeignKeys(
 	if input.Database == "" {
 		return nil, ForeignKeysOutput{}, fmt.Errorf("database is required")
 	}
+	if err := requireAllowedDatabase(input.Database); err != nil {
+		return nil, ForeignKeysOutput{}, err
+	}
 
 	ctx, cancel := context.WithTimeout(ctx, queryTimeout)
 	defer cancel()
@@ -572,20 +685,28 @@ func toolListStatus(
 	ctx, cancel := context.WithTimeout(ctx, queryTimeout)
 	defer cancel()
 
-	query := "SHOW GLOBAL STATUS"
-	if input.Pattern != "" {
-		query += " LIKE ?"
-	}
-
 	var rows *sql.Rows
 	var err error
+
+	// Use performance_schema for better performance and flexibility
 	if input.Pattern != "" {
-		rows, err = getDB().QueryContext(ctx, query, input.Pattern)
+		rows, err = getDB().QueryContext(ctx,
+			"SELECT VARIABLE_NAME, VARIABLE_VALUE FROM performance_schema.global_status WHERE VARIABLE_NAME LIKE ? ORDER BY VARIABLE_NAME",
+			input.Pattern)
 	} else {
-		rows, err = getDB().QueryContext(ctx, query)
+		rows, err = getDB().QueryContext(ctx,
+			"SELECT VARIABLE_NAME, VARIABLE_VALUE FROM performance_schema.global_status ORDER BY VARIABLE_NAME")
 	}
 	if err != nil {
-		return nil, ListStatusOutput{}, fmt.Errorf("SHOW STATUS failed: %w", err)
+		// Fallback to SHOW GLOBAL STATUS for restricted environments or older versions
+		if input.Pattern != "" {
+			rows, err = getDB().QueryContext(ctx, "SHOW GLOBAL STATUS LIKE ?", input.Pattern)
+		} else {
+			rows, err = getDB().QueryContext(ctx, "SHOW GLOBAL STATUS")
+		}
+		if err != nil {
+			return nil, ListStatusOutput{}, fmt.Errorf("query status failed: %w", err)
+		}
 	}
 	defer rows.Close()
 
@@ -615,20 +736,29 @@ func toolListVariables(
 	ctx, cancel := context.WithTimeout(ctx, queryTimeout)
 	defer cancel()
 
-	query := "SHOW GLOBAL VARIABLES"
-	if input.Pattern != "" {
-		query += " LIKE ?"
-	}
-
 	var rows *sql.Rows
 	var err error
+
+	// Prefer SHOW GLOBAL VARIABLES first: it is the most compatible path across managed
+	// MySQL/MariaDB deployments. Some environments stall when selecting from
+	// performance_schema.global_variables; use that only as a fallback.
 	if input.Pattern != "" {
-		rows, err = getDB().QueryContext(ctx, query, input.Pattern)
+		rows, err = getDB().QueryContext(ctx, "SHOW GLOBAL VARIABLES LIKE ?", input.Pattern)
 	} else {
-		rows, err = getDB().QueryContext(ctx, query)
+		rows, err = getDB().QueryContext(ctx, "SHOW GLOBAL VARIABLES")
 	}
 	if err != nil {
-		return nil, ListVariablesOutput{}, fmt.Errorf("SHOW VARIABLES failed: %w", err)
+		if input.Pattern != "" {
+			rows, err = getDB().QueryContext(ctx,
+				"SELECT VARIABLE_NAME, VARIABLE_VALUE FROM performance_schema.global_variables WHERE VARIABLE_NAME LIKE ? ORDER BY VARIABLE_NAME",
+				input.Pattern)
+		} else {
+			rows, err = getDB().QueryContext(ctx,
+				"SELECT VARIABLE_NAME, VARIABLE_VALUE FROM performance_schema.global_variables ORDER BY VARIABLE_NAME")
+		}
+		if err != nil {
+			return nil, ListVariablesOutput{}, fmt.Errorf("query variables failed: %w", err)
+		}
 	}
 	defer rows.Close()
 
@@ -650,6 +780,268 @@ func toolListVariables(
 	return nil, out, nil
 }
 
+func toolSearchSchema(
+	ctx context.Context,
+	req *mcp.CallToolRequest,
+	input SearchSchemaInput,
+) (*mcp.CallToolResult, SearchSchemaOutput, error) {
+	if input.Pattern == "" {
+		return nil, SearchSchemaOutput{}, fmt.Errorf("pattern is required")
+	}
+	if input.Database != "" {
+		if err := requireAllowedDatabase(input.Database); err != nil {
+			return nil, SearchSchemaOutput{}, err
+		}
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, queryTimeout)
+	defer cancel()
+
+	out := SearchSchemaOutput{Matches: []SchemaMatch{}}
+
+	// 1. Search for matching tables
+	tableQuery := `SELECT TABLE_SCHEMA, TABLE_NAME 
+		FROM information_schema.TABLES 
+		WHERE TABLE_NAME LIKE ?`
+	var tableArgs []interface{}
+	tableArgs = append(tableArgs, input.Pattern)
+
+	if input.Database != "" {
+		tableQuery += " AND TABLE_SCHEMA = ?"
+		tableArgs = append(tableArgs, input.Database)
+	} else if accessControlEnabled() {
+		allowed := allowedDatabasesLower()
+		if len(allowed) == 0 {
+			return nil, SearchSchemaOutput{}, fmt.Errorf("MYSQL_MCP_ALLOWED_DATABASES is set but empty; cannot run search_schema without a database filter")
+		}
+		ph := strings.Repeat("?,", len(allowed))
+		ph = ph[:len(ph)-1]
+		tableQuery += " AND LOWER(TABLE_SCHEMA) IN (" + ph + ")"
+		for _, db := range allowed {
+			tableArgs = append(tableArgs, db)
+		}
+	} else {
+		tableQuery += " AND TABLE_SCHEMA NOT IN ('information_schema', 'performance_schema', 'mysql', 'sys')"
+	}
+	tableQuery += " LIMIT ?"
+	tableArgs = append(tableArgs, maxRows)
+
+	rows, err := getDB().QueryContext(ctx, tableQuery, tableArgs...)
+	if err != nil {
+		return nil, SearchSchemaOutput{}, fmt.Errorf("table search failed: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var m SchemaMatch
+		if err := rows.Scan(&m.Database, &m.Table); err != nil {
+			continue
+		}
+		m.Type = "TABLE"
+		out.Matches = append(out.Matches, m)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, SearchSchemaOutput{}, err
+	}
+
+	// 2. Search for matching columns
+	colQuery := `SELECT TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME 
+		FROM information_schema.COLUMNS 
+		WHERE COLUMN_NAME LIKE ?`
+	var colArgs []interface{}
+	colArgs = append(colArgs, input.Pattern)
+
+	if input.Database != "" {
+		colQuery += " AND TABLE_SCHEMA = ?"
+		colArgs = append(colArgs, input.Database)
+	} else if accessControlEnabled() {
+		allowed := allowedDatabasesLower()
+		if len(allowed) == 0 {
+			return nil, SearchSchemaOutput{}, fmt.Errorf("MYSQL_MCP_ALLOWED_DATABASES is set but empty; cannot run search_schema without a database filter")
+		}
+		ph := strings.Repeat("?,", len(allowed))
+		ph = ph[:len(ph)-1]
+		colQuery += " AND LOWER(TABLE_SCHEMA) IN (" + ph + ")"
+		for _, db := range allowed {
+			colArgs = append(colArgs, db)
+		}
+	} else {
+		colQuery += " AND TABLE_SCHEMA NOT IN ('information_schema', 'performance_schema', 'mysql', 'sys')"
+	}
+	colQuery += " LIMIT ?"
+	colArgs = append(colArgs, maxRows-len(out.Matches))
+
+	if len(out.Matches) < maxRows {
+		crows, err := getDB().QueryContext(ctx, colQuery, colArgs...)
+		if err != nil {
+			return nil, SearchSchemaOutput{}, fmt.Errorf("column search failed: %w", err)
+		}
+		defer crows.Close()
+
+		for crows.Next() {
+			var m SchemaMatch
+			if err := crows.Scan(&m.Database, &m.Table, &m.Column); err != nil {
+				continue
+			}
+			m.Type = "COLUMN"
+			out.Matches = append(out.Matches, m)
+		}
+		if err := crows.Err(); err != nil {
+			return nil, SearchSchemaOutput{}, err
+		}
+	}
+
+	return nil, out, nil
+}
+
+func toolSchemaDiff(
+	ctx context.Context,
+	req *mcp.CallToolRequest,
+	input SchemaDiffInput,
+) (*mcp.CallToolResult, SchemaDiffOutput, error) {
+	if input.SourceDatabase == "" || input.TargetDatabase == "" {
+		return nil, SchemaDiffOutput{}, fmt.Errorf("source_database and target_database are required")
+	}
+	if err := requireAllowedDatabase(input.SourceDatabase); err != nil {
+		return nil, SchemaDiffOutput{}, err
+	}
+	if err := requireAllowedDatabase(input.TargetDatabase); err != nil {
+		return nil, SchemaDiffOutput{}, err
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, queryTimeout)
+	defer cancel()
+
+	out := SchemaDiffOutput{
+		SourceDatabase: input.SourceDatabase,
+		TargetDatabase: input.TargetDatabase,
+		Diffs:          []DiffResult{},
+	}
+
+	// Get tables from source
+	sourceTables := make(map[string]bool)
+	sourceRows, err := getDB().QueryContext(ctx, "SELECT TABLE_NAME FROM information_schema.TABLES WHERE TABLE_SCHEMA = ?", input.SourceDatabase)
+	if err != nil {
+		return nil, SchemaDiffOutput{}, fmt.Errorf("failed to list source tables: %w", err)
+	}
+	defer sourceRows.Close()
+	for sourceRows.Next() {
+		var name string
+		if err := sourceRows.Scan(&name); err == nil {
+			sourceTables[name] = true
+		}
+	}
+	if err := sourceRows.Err(); err != nil {
+		return nil, SchemaDiffOutput{}, fmt.Errorf("source tables iteration failed: %w", err)
+	}
+
+	// Get tables from target
+	targetTables := make(map[string]bool)
+	targetRows, err := getDB().QueryContext(ctx, "SELECT TABLE_NAME FROM information_schema.TABLES WHERE TABLE_SCHEMA = ?", input.TargetDatabase)
+	if err != nil {
+		return nil, SchemaDiffOutput{}, fmt.Errorf("failed to list target tables: %w", err)
+	}
+	defer targetRows.Close()
+	for targetRows.Next() {
+		var name string
+		if err := targetRows.Scan(&name); err == nil {
+			targetTables[name] = true
+		}
+	}
+	if err := targetRows.Err(); err != nil {
+		return nil, SchemaDiffOutput{}, fmt.Errorf("target tables iteration failed: %w", err)
+	}
+
+	// Compare tables
+	for name := range sourceTables {
+		if !targetTables[name] {
+			out.Diffs = append(out.Diffs, DiffResult{
+				Table:   name,
+				Status:  "MISSING",
+				Details: fmt.Sprintf("Table exists in %s but missing in %s", input.SourceDatabase, input.TargetDatabase),
+			})
+		}
+	}
+
+	for name := range targetTables {
+		if !sourceTables[name] {
+			out.Diffs = append(out.Diffs, DiffResult{
+				Table:   name,
+				Status:  "EXTRA",
+				Details: fmt.Sprintf("Table exists in %s but missing in %s", input.TargetDatabase, input.SourceDatabase),
+			})
+		} else {
+			// Table exists in both, compare columns
+			diff, err := compareTableSchema(ctx, input.SourceDatabase, input.TargetDatabase, name)
+			if err != nil {
+				return nil, SchemaDiffOutput{}, err
+			}
+			if diff != "" {
+				out.Diffs = append(out.Diffs, DiffResult{
+					Table:   name,
+					Status:  "CHANGED",
+					Details: diff,
+				})
+			}
+		}
+	}
+
+	return nil, out, nil
+}
+
+func compareTableSchema(ctx context.Context, sourceDB, targetDB, table string) (string, error) {
+	query := `SELECT COLUMN_NAME, COLUMN_TYPE, IS_NULLABLE, COLUMN_DEFAULT 
+		FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? 
+		ORDER BY COLUMN_NAME`
+
+	getSourceCols := func(dbName string) (map[string]string, error) {
+		rows, err := getDB().QueryContext(ctx, query, dbName, table)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+
+		cols := make(map[string]string)
+		for rows.Next() {
+			var name, ctype, nullable, def sql.NullString
+			if err := rows.Scan(&name, &ctype, &nullable, &def); err == nil {
+				cols[name.String] = fmt.Sprintf("%s, Null:%s, Def:%s", ctype.String, nullable.String, def.String)
+			}
+		}
+		return cols, rows.Err()
+	}
+
+	sCols, err := getSourceCols(sourceDB)
+	if err != nil {
+		return "", err
+	}
+	tCols, err := getSourceCols(targetDB)
+	if err != nil {
+		return "", err
+	}
+
+	var diffs []string
+	for name, sDef := range sCols {
+		tDef, exists := tCols[name]
+		if !exists {
+			diffs = append(diffs, fmt.Sprintf("Column %s missing in %s", name, targetDB))
+		} else if sDef != tDef {
+			diffs = append(diffs, fmt.Sprintf("Column %s differs: %s (src) vs %s (tgt)", name, sDef, tDef))
+		}
+	}
+
+	for name := range tCols {
+		if _, exists := sCols[name]; !exists {
+			diffs = append(diffs, fmt.Sprintf("Column %s extra in %s", name, targetDB))
+		}
+	}
+
+	if len(diffs) == 0 {
+		return "", nil
+	}
+	return strings.Join(diffs, "; "), nil
+}
+
 // ===== Vector Tool Handlers (MySQL 9.0+) =====
 
 func toolVectorSearch(
@@ -659,6 +1051,9 @@ func toolVectorSearch(
 ) (*mcp.CallToolResult, VectorSearchOutput, error) {
 	if input.Database == "" || input.Table == "" || input.Column == "" {
 		return nil, VectorSearchOutput{}, fmt.Errorf("database, table, and column are required")
+	}
+	if err := requireAllowedDatabase(input.Database); err != nil {
+		return nil, VectorSearchOutput{}, err
 	}
 	if len(input.Query) == 0 {
 		return nil, VectorSearchOutput{}, fmt.Errorf("query vector is required")
@@ -783,6 +1178,9 @@ func toolVectorInfo(
 ) (*mcp.CallToolResult, VectorInfoOutput, error) {
 	if input.Database == "" {
 		return nil, VectorInfoOutput{}, fmt.Errorf("database is required")
+	}
+	if err := requireAllowedDatabase(input.Database); err != nil {
+		return nil, VectorInfoOutput{}, err
 	}
 
 	ctx, cancel := context.WithTimeout(ctx, queryTimeout)

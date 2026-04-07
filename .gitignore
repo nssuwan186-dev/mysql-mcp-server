@@ -4,6 +4,7 @@ bin/
 *.swp
 .idea/
 .vscode/
+.cursor/
 
 # Personal shell configuration files (should not be committed)
 .bash_profile
@@ -19,3 +20,10 @@ CODE_REVIEW.md
 *_review.md
 REVIEW*.md
 review*.md
+
+# Local worktrees / stray clone dir at repo root (never commit)
+/.worktrees/
+/mysql-mcp-server
+
+# Local prerelease binary smoke-test download
+/.local-rc-test/

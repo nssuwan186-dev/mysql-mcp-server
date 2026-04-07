@@ -9,6 +9,7 @@ This document provides detailed architecture diagrams for the MySQL MCP Server.
 - [Request Flow](#request-flow)
   - [MCP Mode](#mcp-mode-stdio)
   - [HTTP REST API Mode](#http-rest-api-mode)
+  - [Metrics HTTP sidecar (stdio)](#metrics-http-sidecar-stdio)
 - [Configuration Loading](#configuration-loading)
 - [Connection Management](#connection-management)
 - [Tool Categories](#tool-categories)
@@ -17,7 +18,7 @@ This document provides detailed architecture diagrams for the MySQL MCP Server.
 
 ## High-Level Architecture
 
-The MySQL MCP Server acts as a bridge between AI clients and MySQL databases, supporting both MCP protocol (stdio) and HTTP REST API modes.
+The MySQL MCP Server acts as a bridge between AI clients and MySQL databases, supporting MCP over **stdio**, an optional **HTTP REST API** when **`MYSQL_MCP_HTTP=1`**, and an optional **metrics-only HTTP listener** when **`MYSQL_MCP_METRICS_HTTP=1`** (stdio MCP plus **`/health`**, **`/status`**, **`/api/metrics/tokens`** on **`MYSQL_HTTP_PORT`**).
 
 ```mermaid
 graph TB
@@ -26,12 +27,14 @@ graph TB
         Cursor[("Cursor IDE<br/>(MCP Client)")]
         ChatGPT[("ChatGPT<br/>Custom GPT")]
         HTTPClient[("HTTP Clients<br/>curl, Postman")]
+        Browser[("Browser / curl<br/>(/status dashboard)")]
     end
     
     subgraph "MySQL MCP Server"
         direction TB
         MCP["MCP Protocol Handler<br/>(stdio JSON-RPC)"]
-        HTTP["HTTP REST API<br/>(Port 9306)"]
+        HTTP["HTTP REST API<br/>(full API; MYSQL_MCP_HTTP)"]
+        MetricsHTTP["Metrics HTTP<br/>(optional; MYSQL_MCP_METRICS_HTTP)"]
         Tools["Tool Handlers<br/>(Core, Extended, Vector)"]
         CM["Connection Manager<br/>(Pool per DSN)"]
         Config["Configuration<br/>(File + Env)"]
@@ -47,9 +50,11 @@ graph TB
     Cursor -->|"stdio<br/>MCP Protocol"| MCP
     ChatGPT -->|"HTTP/HTTPS"| HTTP
     HTTPClient -->|"HTTP/HTTPS"| HTTP
+    Browser -->|"GET /status, /health"| MetricsHTTP
     
     MCP --> Tools
     HTTP --> Tools
+    MetricsHTTP -.->|"same process<br/>as MCP"| MCP
     Tools --> CM
     Config -.->|"loads"| CM
     
@@ -193,6 +198,26 @@ sequenceDiagram
         Handler-->>MW: JSON response
         MW-->>Client: 200 OK<br/>{"success": true, "data": {...}}
     end
+```
+
+### Metrics HTTP sidecar (stdio)
+
+When **`MYSQL_MCP_METRICS_HTTP=1`** and **`MYSQL_MCP_HTTP`** is not the primary full-REST mode, the process keeps **stdio MCP** and starts a small HTTP server on **`MYSQL_HTTP_PORT`** (default **9306**) for **`/health`**, **`/api/metrics/tokens`**, and **`/status`**. That shares **token metrics** with the same MCP tool calls (e.g. Claude Desktop). Full REST mode (**`MYSQL_MCP_HTTP=1`**) supersedes this sidecar.
+
+```mermaid
+sequenceDiagram
+    participant Claude as AI Client<br/>(stdio MCP)
+    participant MCP as MCP Server<br/>(main.go)
+    participant Browser as Browser / curl
+    participant MH as Metrics HTTP<br/>(http.go)
+
+    Claude->>MCP: tools/call (JSON-RPC)
+    MCP-->>Claude: tool result (tokens recorded)
+
+    Browser->>MH: GET /status
+    MH-->>Browser: HTML dashboard (same token counters)
+
+    Note over MCP,MH: Same OS process; metrics listener is optional
 ```
 
 ---

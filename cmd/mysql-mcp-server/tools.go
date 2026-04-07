@@ -8,7 +8,9 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
+	"github.com/askdba/mysql-mcp-server/internal/dbretry"
 	"github.com/askdba/mysql-mcp-server/internal/util"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -42,15 +44,14 @@ func toolListDatabases(
 		if err := rows.Scan(&name); err != nil {
 			return nil, ListDatabasesOutput{}, fmt.Errorf("scan failed: %w", err)
 		}
+		if !databaseAllowed(name) {
+			continue
+		}
 		out.Databases = append(out.Databases, DatabaseInfo{Name: name})
 		if len(out.Databases) >= maxRows {
 			break
 		}
 	}
-	if err := rows.Err(); err != nil {
-		return nil, ListDatabasesOutput{}, fmt.Errorf("row iteration failed: %w", err)
-	}
-
 	if err := rows.Err(); err != nil {
 		return nil, ListDatabasesOutput{}, fmt.Errorf("row iteration failed: %w", err)
 	}
@@ -66,6 +67,9 @@ func toolListTables(
 
 	if strings.TrimSpace(input.Database) == "" {
 		return nil, ListTablesOutput{}, fmt.Errorf("database is required")
+	}
+	if err := requireAllowedDatabase(input.Database); err != nil {
+		return nil, ListTablesOutput{}, err
 	}
 
 	ctx, cancel := context.WithTimeout(ctx, queryTimeout)
@@ -133,20 +137,6 @@ func toolListTables(
 		}
 	}
 
-	if err := rows.Err(); err != nil {
-		return nil, ListTablesOutput{}, fmt.Errorf("ListTables rows iteration: %w", err)
-	}
-
-	if len(out.Tables) == 0 {
-		exists, err := schemaExists(ctx, input.Database)
-		if err != nil {
-			return nil, ListTablesOutput{}, err
-		}
-		if !exists {
-			return nil, ListTablesOutput{}, fmt.Errorf("database not found: %s", input.Database)
-		}
-	}
-
 	return nil, out, nil
 }
 
@@ -161,6 +151,9 @@ func toolDescribeTable(
 	}
 	if strings.TrimSpace(input.Table) == "" {
 		return nil, DescribeTableOutput{}, fmt.Errorf("table is required")
+	}
+	if err := requireAllowedDatabase(input.Database); err != nil {
+		return nil, DescribeTableOutput{}, err
 	}
 
 	ctx, cancel := context.WithTimeout(ctx, queryTimeout)
@@ -226,28 +219,6 @@ func toolDescribeTable(
 		return nil, DescribeTableOutput{}, fmt.Errorf("no columns found for table: %s.%s", input.Database, input.Table)
 	}
 
-	if err := rows.Err(); err != nil {
-		return nil, DescribeTableOutput{}, fmt.Errorf("row iteration failed: %w", err)
-	}
-
-	if len(out.Columns) == 0 {
-		exists, err := tableExists(ctx, input.Database, input.Table)
-		if err != nil {
-			return nil, DescribeTableOutput{}, err
-		}
-		if !exists {
-			schemaOk, err := schemaExists(ctx, input.Database)
-			if err != nil {
-				return nil, DescribeTableOutput{}, err
-			}
-			if !schemaOk {
-				return nil, DescribeTableOutput{}, fmt.Errorf("database not found: %s", input.Database)
-			}
-			return nil, DescribeTableOutput{}, fmt.Errorf("table not found: %s.%s", input.Database, input.Table)
-		}
-		return nil, DescribeTableOutput{}, fmt.Errorf("no columns found for table: %s.%s", input.Database, input.Table)
-	}
-
 	return nil, out, nil
 }
 
@@ -284,6 +255,112 @@ func tableExists(ctx context.Context, database, table string) (bool, error) {
 	return false, fmt.Errorf("table existence check failed: %w", err)
 }
 
+// scanAndNormalizeRow reads one row from rows and returns normalized cell values.
+func scanAndNormalizeRow(rows *sql.Rows, ncols int) ([]interface{}, error) {
+	values := make([]interface{}, ncols)
+	valuePtrs := make([]interface{}, ncols)
+	for i := range values {
+		valuePtrs[i] = &values[i]
+	}
+	if err := rows.Scan(valuePtrs...); err != nil {
+		return nil, fmt.Errorf("failed to scan row: %w", err)
+	}
+	rowValues := make([]interface{}, ncols)
+	for i, v := range values {
+		rowValues[i] = util.NormalizeValue(v)
+	}
+	return rowValues, nil
+}
+
+// runQueryScan executes finalSQL on a dedicated connection (USE database when set),
+// scans rows, and enforces limit. When paginated is true, finalSQL must request at
+// most limit+1 rows (server-side); HasMore and NextOffset are derived from the extra row.
+// limit must be positive when paginated is true (callers validate).
+func runQueryScan(ctx context.Context, db *sql.DB, finalSQL, database string, limit int, paginated bool, pageOffset int) (QueryResult, error) {
+	conn, err := db.Conn(ctx)
+	if err != nil {
+		return QueryResult{}, fmt.Errorf("failed to get connection: %w", err)
+	}
+	defer conn.Close()
+
+	if database != "" {
+		quotedDB, err := util.QuoteIdent(database)
+		if err != nil {
+			return QueryResult{}, fmt.Errorf("invalid database name: %w", err)
+		}
+		if _, err := conn.ExecContext(ctx, "USE "+quotedDB); err != nil {
+			return QueryResult{}, fmt.Errorf("failed to select database '%s': %w", database, err)
+		}
+	}
+
+	rows, err := conn.QueryContext(ctx, finalSQL)
+	if err != nil {
+		return QueryResult{}, fmt.Errorf("query failed: %w", err)
+	}
+	rowsClosed := false
+	defer func() {
+		if !rowsClosed {
+			_ = rows.Close()
+		}
+	}()
+
+	out := QueryResult{
+		Columns: make([]string, 0),
+		Rows:    make([][]interface{}, 0, limit),
+	}
+
+	columns, err := rows.Columns()
+	if err != nil {
+		_ = rows.Close()
+		rowsClosed = true
+		return QueryResult{}, fmt.Errorf("failed to get columns: %w", err)
+	}
+	out.Columns = columns
+
+	ncols := len(columns)
+	for rows.Next() {
+		rowValues, err := scanAndNormalizeRow(rows, ncols)
+		if err != nil {
+			_ = rows.Close()
+			rowsClosed = true
+			return QueryResult{}, err
+		}
+		if len(out.Rows) < limit {
+			out.Rows = append(out.Rows, rowValues)
+			continue
+		}
+		if paginated {
+			out.HasMore = true
+			break
+		}
+		out.Truncated = true
+		if err := rows.Close(); err != nil {
+			return QueryResult{}, fmt.Errorf("failed to close rows: %w", err)
+		}
+		rowsClosed = true
+		break
+	}
+
+	if !rowsClosed {
+		if err := rows.Err(); err != nil {
+			_ = rows.Close()
+			rowsClosed = true
+			return QueryResult{}, fmt.Errorf("row iteration failed: %w", err)
+		}
+		if err := rows.Close(); err != nil {
+			return QueryResult{}, fmt.Errorf("failed to close rows: %w", err)
+		}
+		rowsClosed = true
+	}
+
+	if out.HasMore {
+		next := pageOffset + limit
+		out.NextOffset = &next
+	}
+
+	return out, nil
+}
+
 func toolRunQuery(
 	ctx context.Context,
 	req *mcp.CallToolRequest,
@@ -296,6 +373,14 @@ func toolRunQuery(
 		return nil, QueryResult{}, fmt.Errorf("sql is required")
 	}
 	database := strings.TrimSpace(input.Database)
+	if accessControlEnabled() {
+		if database == "" {
+			return nil, QueryResult{}, fmt.Errorf("database is required when MYSQL_MCP_ALLOWED_DATABASES is set")
+		}
+		if err := requireAllowedDatabase(database); err != nil {
+			return nil, QueryResult{}, err
+		}
+	}
 
 	// Token estimation (optional)
 	inputTokens, _ := estimateTokensForValue(input)
@@ -323,111 +408,86 @@ func toolRunQuery(
 		}
 		return nil, QueryResult{}, fmt.Errorf("query validation failed: %w", err)
 	}
+	if err := requireReferencedSchemasInQuery(sqlText); err != nil {
+		return nil, QueryResult{}, err
+	}
 
 	limit := maxRows
 	if input.MaxRows != nil && *input.MaxRows > 0 && *input.MaxRows < maxRows {
 		limit = *input.MaxRows
 	}
+	if limit < 0 {
+		limit = 0
+	}
+
+	usePagination := input.Offset != nil
+	var pageOffset int
+	if usePagination {
+		pageOffset = *input.Offset
+		if pageOffset < 0 {
+			return nil, QueryResult{}, fmt.Errorf("offset must be non-negative")
+		}
+		if limit <= 0 {
+			return nil, QueryResult{}, fmt.Errorf(
+				"offset pagination requires a positive effective row limit (got %d; check MYSQL_MAX_ROWS and run_query max_rows)",
+				limit,
+			)
+		}
+	}
+
+	// Detect SELECT * before rewriting so we can surface a warning.
+	hasStar := util.HasSelectStar(sqlText)
+
+	var finalSQL string
+	if usePagination {
+		var err error
+		finalSQL, err = util.InjectLimitWithOffset(sqlText, limit+1, pageOffset)
+		if err != nil {
+			return nil, QueryResult{}, fmt.Errorf("pagination: %w", err)
+		}
+	} else {
+		// Inject a server-side LIMIT so MySQL stops processing early.
+		// This is a best-effort optimization; we still enforce the row cap on
+		// the client side below to guard against non-SELECT statements where
+		// InjectLimit is a no-op.
+		finalSQL = util.InjectLimit(sqlText, limit)
+	}
 
 	ctx, cancel := context.WithTimeout(ctx, queryTimeout)
 	defer cancel()
 
-	// Use a dedicated connection so USE applies to the query.
-	conn, err := getDB().Conn(ctx)
+	db := getDB()
+	var out QueryResult
+	err := dbretry.Do(ctx, db, dbRetryCfg, pingTimeout, func() error {
+		var e error
+		out, e = runQueryScan(ctx, db, finalSQL, database, limit, usePagination, pageOffset)
+		return e
+	})
 	if err != nil {
-		return nil, QueryResult{}, fmt.Errorf("failed to get connection: %w", err)
-	}
-	defer conn.Close()
-
-	if database != "" {
-		quotedDB, err := util.QuoteIdent(database)
-		if err != nil {
-			return nil, QueryResult{}, fmt.Errorf("invalid database name: %w", err)
-		}
-		if _, err := conn.ExecContext(ctx, "USE "+quotedDB); err != nil {
-			return nil, QueryResult{}, fmt.Errorf("failed to select database '%s': %w", database, err)
-		}
-	}
-
-	rows, err := conn.QueryContext(ctx, sqlText)
-	if err != nil {
-		timer.LogError(err, sqlText, tokens, nil)
+		timer.LogError(err, finalSQL, tokens, nil)
 		if auditLogger != nil {
 			auditLogger.Log(&AuditEntry{
 				Tool:        "run_query",
 				Database:    database,
-				Query:       util.TruncateQuery(sqlText, 500),
+				Query:       util.TruncateQuery(finalSQL, 500),
 				DurationMs:  timer.ElapsedMs(),
 				InputTokens: inputTokens,
 				Success:     false,
 				Error:       err.Error(),
 			})
 		}
-		return nil, QueryResult{}, fmt.Errorf("query failed: %w", err)
-	}
-	rowsClosed := false
-	defer func() {
-		if !rowsClosed {
-			_ = rows.Close()
-		}
-	}()
-
-	out := QueryResult{
-		Columns: make([]string, 0),
-		Rows:    make([][]interface{}, 0),
+		return nil, QueryResult{}, err
 	}
 
-	columns, err := rows.Columns()
-	if err != nil {
-		_ = rows.Close()
-		rowsClosed = true
-		return nil, QueryResult{}, fmt.Errorf("failed to get columns: %w", err)
-	}
-	out.Columns = columns
-
-	count := 0
-	for rows.Next() {
-		// Create a slice of interface{} to hold the values
-		values := make([]interface{}, len(columns))
-		valuePtrs := make([]interface{}, len(columns))
-		for i := range values {
-			valuePtrs[i] = &values[i]
-		}
-
-		if err := rows.Scan(valuePtrs...); err != nil {
-			_ = rows.Close()
-			rowsClosed = true
-			return nil, QueryResult{}, fmt.Errorf("failed to scan row: %w", err)
-		}
-
-		// Normalize values (handle []byte for strings, etc.)
-		rowValues := make([]interface{}, len(columns))
-		for i, v := range values {
-			rowValues[i] = util.NormalizeValue(v)
-		}
-		out.Rows = append(out.Rows, rowValues)
-		count++
-
-		if count >= limit {
-			// Close early to avoid leaving unread results on the connection.
-			if err := rows.Close(); err != nil {
-				return nil, QueryResult{}, fmt.Errorf("failed to close rows: %w", err)
-			}
-			rowsClosed = true
-			break
-		}
+	// Attach a warning when SELECT * was used so the AI can adjust future queries.
+	if hasStar {
+		out.Warning = "SELECT * retrieves all columns, which increases payload size. " +
+			"Specify only the columns you need for better performance."
 	}
 
-	if !rowsClosed {
-		if err := rows.Err(); err != nil {
-			_ = rows.Close()
-			rowsClosed = true
-			return nil, QueryResult{}, fmt.Errorf("row iteration failed: %w", err)
-		}
-		if err := rows.Close(); err != nil {
-			return nil, QueryResult{}, fmt.Errorf("failed to close rows: %w", err)
-		}
-		rowsClosed = true
+	// Apply column masking if configured
+	if cfg != nil && len(cfg.MaskColumns) > 0 {
+		maskResults(out.Columns, out.Rows, cfg.MaskColumns)
 	}
 
 	// Token estimation for output (optional)
@@ -435,16 +495,21 @@ func toolRunQuery(
 	tokens.OutputEstimated = outputTokens
 	tokens.TotalEstimated = inputTokens + outputTokens
 
+	// Record into global metrics aggregator (when token tracking enabled)
+	if tokenTracking {
+		globalTokenMetrics.Record("run_query", inputTokens, outputTokens)
+	}
+
 	// Calculate efficiency metrics
 	eff := CalculateEfficiency(inputTokens, outputTokens, len(out.Rows))
 
 	// Log success
-	timer.LogSuccess(len(out.Rows), sqlText, tokens, eff)
+	timer.LogSuccess(len(out.Rows), finalSQL, tokens, eff)
 	if auditLogger != nil {
 		entry := &AuditEntry{
 			Tool:         "run_query",
 			Database:     database,
-			Query:        util.TruncateQuery(sqlText, 500),
+			Query:        util.TruncateQuery(finalSQL, 500),
 			DurationMs:   timer.ElapsedMs(),
 			RowCount:     len(out.Rows),
 			InputTokens:  inputTokens,
@@ -472,7 +537,10 @@ func toolPing(
 	defer cancel()
 
 	start := NewQueryTimer("ping")
-	err := getDB().PingContext(ctx)
+	db := getDB()
+	err := dbretry.Do(ctx, db, dbRetryCfg, pingTimeout, func() error {
+		return db.PingContext(ctx)
+	})
 	latency := start.ElapsedMs()
 
 	if err != nil {
@@ -597,6 +665,86 @@ func toolServerInfo(
 		return nil, ServerInfoOutput{}, fmt.Errorf("failed to get current user/database: %w", err)
 	}
 
+	if tokenTracking {
+		s := globalTokenMetrics.Snapshot()
+		out.TokenMetrics = &ServerTokenSnapshot{
+			ToolCalls:         s.QueryCount,
+			TotalInputTokens:  s.TotalInputTokens,
+			TotalOutputTokens: s.TotalOutputTokens,
+			TotalTokens:       s.TotalTokens,
+			MetricsUptimeSec:  s.UptimeSeconds,
+		}
+	}
+
+	if input.Detailed {
+		h := &ServerHealthSnapshot{}
+		pctx, pcancel := context.WithTimeout(ctx, pingTimeout)
+		t0 := time.Now()
+		_ = getDB().PingContext(pctx)
+		pcancel()
+		h.PingLatencyMs = time.Since(t0).Milliseconds()
+
+		keyVars := []string{
+			"Threads_running", "Slow_queries", "Questions",
+			"Innodb_buffer_pool_read_requests", "Innodb_buffer_pool_reads",
+		}
+		ph := strings.Repeat("?,", len(keyVars))
+		ph = ph[:len(ph)-1]
+		q := fmt.Sprintf(`SELECT VARIABLE_NAME, VARIABLE_VALUE FROM performance_schema.global_status WHERE VARIABLE_NAME IN (%s)`, ph)
+		args := make([]interface{}, len(keyVars))
+		for i := range keyVars {
+			args[i] = keyVars[i]
+		}
+		stRows, err := getDB().QueryContext(ctx, q, args...)
+		if err != nil {
+			stRows, err = getDB().QueryContext(ctx,
+				`SHOW GLOBAL STATUS WHERE Variable_name IN ('Threads_running','Slow_queries','Questions','Innodb_buffer_pool_read_requests','Innodb_buffer_pool_reads')`)
+		}
+		if err == nil {
+			defer func() { _ = stRows.Close() }()
+			var reads, reqs int64
+			var gotReads, gotReqs bool
+			for stRows.Next() {
+				var n, v string
+				if err := stRows.Scan(&n, &v); err != nil {
+					continue
+				}
+				iv, _ := strconv.ParseInt(v, 10, 64)
+				switch strings.ToLower(n) {
+				case "threads_running":
+					h.ThreadsRunning = int(iv)
+				case "slow_queries":
+					h.SlowQueries = iv
+				case "questions":
+					h.Questions = iv
+				case "innodb_buffer_pool_reads":
+					reads = iv
+					gotReads = true
+				case "innodb_buffer_pool_read_requests":
+					reqs = iv
+					gotReqs = true
+				}
+			}
+			if gotReads && gotReqs {
+				br := reads
+				h.BufferPoolReads = &br
+				rr := reqs
+				h.BufferPoolReadRequests = &rr
+				if reqs > 0 {
+					hit := 100.0 * (1.0 - float64(reads)/float64(reqs))
+					if hit < 0 {
+						hit = 0
+					}
+					if hit > 100 {
+						hit = 100
+					}
+					h.BufferPoolHitPercent = &hit
+				}
+			}
+		}
+		out.Health = h
+	}
+
 	return nil, out, nil
 }
 
@@ -677,4 +825,39 @@ func toolUseConnection(
 		Message:  message,
 		Database: currentDB.String,
 	}, nil
+}
+
+func maskResults(cols []string, rows [][]interface{}, patterns []string) {
+	var nonEmpty []string
+	for _, p := range patterns {
+		if t := strings.TrimSpace(p); t != "" {
+			nonEmpty = append(nonEmpty, t)
+		}
+	}
+	if len(nonEmpty) == 0 {
+		return
+	}
+
+	maskIndices := make(map[int]bool)
+	for i, col := range cols {
+		lowerCol := strings.ToLower(col)
+		for _, p := range nonEmpty {
+			if strings.Contains(lowerCol, strings.ToLower(p)) {
+				maskIndices[i] = true
+				break
+			}
+		}
+	}
+
+	if len(maskIndices) == 0 {
+		return
+	}
+
+	for _, row := range rows {
+		for idx := range maskIndices {
+			if idx < len(row) && row[idx] != nil {
+				row[idx] = "********"
+			}
+		}
+	}
 }
